@@ -21,6 +21,7 @@ type Config struct {
 	S3SecretKey   string
 	S3PresignTTL  time.Duration
 	MaxDocsPerPkg int
+	RunSeed       bool
 }
 
 func Load() (Config, error) {
@@ -34,7 +35,7 @@ func Load() (Config, error) {
 	}
 	return Config{
 		Port:          env("PORT", "8090"),
-		DatabaseURL:   env("DATABASE_URL", "postgres://isppr:isppr@localhost:5433/isppr"),
+		DatabaseURL:   env("DATABASE_URL", "postgres://isppr:isppr@localhost:5433/isppr?sslmode=disable"),
 		GotenbergURL:  env("GOTENBERG_URL", "http://localhost:3001"),
 		CORSOrigin:    env("CORS_ORIGIN", "http://localhost:3000"),
 		S3Endpoint:    env("S3_ENDPOINT", "http://localhost:9100"),
@@ -43,6 +44,7 @@ func Load() (Config, error) {
 		S3SecretKey:   env("S3_SECRET_KEY", "minioadmin"),
 		S3PresignTTL:  ttl,
 		MaxDocsPerPkg: maxDocs,
+		RunSeed:       env("RUN_SEED", "0") == "1",
 	}, nil
 }
 

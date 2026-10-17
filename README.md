@@ -56,12 +56,18 @@ docker compose build
 go test ./cmd/... ./internal/...           # add -coverprofile=coverage.out for SonarQube
 cd clients/web && npm test                 # npm run test:coverage emits lcov.info
 
-# migrate (lands in MPE-27 — golang-migrate applies migrations/ at api boot)
-# interim: docker compose exec db psql -U isppr -d isppr -f - < migrations/0001_init.sql
+# migrations apply at api boot (embedded); seed demo data with RUN_SEED=1
+RUN_SEED=1 docker compose up api --build
+
+# coverage floor — 80% per code area, 95% overall goal (see AGENTS.md)
+go test -coverprofile=coverage.out ./cmd/... ./internal/...
+node tools/covercheck.mjs coverage.out
+(cd clients/web && npx vitest run --coverage)
+node tools/covercheck.mjs clients/web/coverage/lcov.info
 
 # sonarqube scan (local instance on :9000 — shared lena2-sonarqube)
-go test -coverprofile=coverage.out ./cmd/... ./internal/...
-(cd clients/web && npm run test:coverage)
+docker run --rm --network host -e SONAR_HOST_URL=http://localhost:9000 \
+  -e SONAR_TOKEN=<token> -v "$PWD:/usr/src" sonarsource/sonar-scanner-cli
 docker run --rm --network host -e SONAR_HOST_URL=http://localhost:9000 \
   -e SONAR_TOKEN=<token> -v "$PWD:/usr/src" sonarsource/sonar-scanner-cli
 ```

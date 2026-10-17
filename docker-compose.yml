@@ -45,10 +45,11 @@ services:
     env_file: .env
     environment:
       PORT: "8090"
-      DATABASE_URL: postgres://isppr:isppr@db:5432/isppr
+      DATABASE_URL: postgres://isppr:isppr@db:5432/isppr?sslmode=disable
       GOTENBERG_URL: http://gotenberg:3000
       S3_ENDPOINT: http://minio:9000
       CORS_ORIGIN: http://localhost:3100
+      RUN_SEED: "1" # dev demo tenant (cli_demo / cust_demo); unset in prod
     ports: ["8090:8090"]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8090/healthz || exit 1"]
