@@ -1,0 +1,34 @@
+# Go
+/bin/
+*.exe
+*.test
+*.out
+coverage.out
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+
+# Env / local
+.env
+.env.local
+.env.*.local
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.playwright-mcp/
+
+# Devin local MCP config (contains secrets)
+.devin/mcp_config.local.json
+
+# Playwright e2e
+test-results/
+playwright-report/
+blob-report/
