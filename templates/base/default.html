@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{title}}</title>
+  {{#if branding.favicon}}<link rel="icon" href="{{branding.favicon}}">{{/if}}
+</head>
+<body>
+  <header class="doc-header">
+    {{#if branding.logo}}<img class="logo" src="{{branding.logo}}" alt="logo">{{/if}}
+    <h1>{{title}}</h1>
+  </header>
+  <main class="doc-body">
+    {{body}}
+  </main>
+  {{#if blocks.footer}}
+  <footer class="doc-footer">{{footer}}</footer>
+  {{/if}}
+</body>
+</html>

@@ -97,7 +97,8 @@ Non-negotiable invariants:
 - Go: handlers live in `internal/` (server, store, render, package as it
   grows) and return `error`; map failures to RFC 7807 `problem+json` in a
   central error handler. Migrations are append-only
-  `migrations/NNNN_name.sql`.
+  `migrations/NNNN_name.up.sql` (golang-migrate naming — the `.up.sql`
+  suffix is required).
 - DB access via sqlc-generated code (`sqlc.yaml` → `internal/store`). Run
   `sqlc generate` after touching `migrations/` or `internal/store/queries/`
   and commit the generated output.

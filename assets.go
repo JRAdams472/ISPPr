@@ -4,5 +4,5 @@ package isppr
 
 import "embed"
 
-//go:embed migrations/*.sql seed/*.sql
+//go:embed migrations/*.sql seed/*.sql templates/base/*
 var Assets embed.FS

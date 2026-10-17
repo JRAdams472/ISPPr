@@ -66,6 +66,8 @@ type TemplateMaster struct {
 	Css       string             `json:"css"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+	Version   int32              `json:"version"`
+	Defaults  []byte             `json:"defaults"`
 }
 
 type TemplateVariant struct {

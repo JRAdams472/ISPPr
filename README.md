@@ -77,14 +77,17 @@ docker run --rm --network host -e SONAR_HOST_URL=http://localhost:9000 \
 - `cmd/dge-api/` — Go API entrypoint
 - `internal/` — `config`, `server`, `store` (sqlc), plus domain stubs
   `tenancy`, `templates`, `render`, `jobs`, `storage`, `admin`
-- `migrations/` — append-only SQL migrations
+- `migrations/` — append-only `NNNN_name.up.sql` (golang-migrate, embedded)
 - `clients/web/` — Next.js admin portal
-- `seed/` — demo data (MPE-27) · `e2e/` — Playwright suite (MPE-46) · `docs/`
+- `templates/base/` — embedded fallback template · `seed/` — demo tenant
+  (`RUN_SEED=1`) · `e2e/` — Playwright suite (MPE-46) · `docs/`
+- `tools/covercheck.mjs` — 80% per-area coverage floor
 - `projectplan.md` — DGE specification
 
 ## Status
 
-MPE-23 scaffold: repo skeleton, schema v1 (`clients`, `customers`,
-`api_keys`, `template_masters`, `template_variants`,
-`generation_requests`), compose stack, CI, agent tooling. See Linear team
-**MPE** for the phased plan.
+P0 scaffold + P1 data layer shipped: sqlc repositories over `clients`,
+`customers`, `api_keys`, `admin_users`, versioned `template_masters` +
+customer `template_variants` (resolution spec:
+`docs/template-resolution.md`), embedded migrations at boot, demo seed,
+SonarQube + coverage-gated CI. See Linear team **MPE** for the phased plan.
