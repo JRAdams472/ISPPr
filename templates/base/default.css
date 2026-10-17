@@ -1,0 +1,4 @@
+body { font-family: sans-serif; margin: 2em; color: #222; }
+.doc-header { border-bottom: 1px solid #ccc; margin-bottom: 1.5em; }
+.doc-header .logo { max-height: 48px; }
+.doc-footer { margin-top: 2em; font-size: 0.8em; color: #666; }
