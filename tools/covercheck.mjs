@@ -48,16 +48,26 @@ function isGenerated(path) {
   }
 }
 
-// Go coverprofile: "pkg/dir/file.go:ls.cs,le.ce nStmt count"
+// Go coverprofile: "pkg/dir/file.go:ls.cs,le.ce nStmt count".
+// With -coverpkg each block repeats once per test binary — dedupe on the
+// block key (path + range + nStmt) and OR-merge hit counts.
 function parseGoCover(text) {
-  const files = new Map(); // file -> [coveredStmts, totalStmts]
+  const blocks = new Map(); // key -> { file, n, covered }
   for (const line of text.split("\n")) {
-    const m = line.match(/^(\S+?):(\d+)\.\d+,\d+\.\d+\s+(\d+)\s+(\d+)$/);
+    const m = line.match(/^(\S+?):(\d+\.\d+,\d+\.\d+)\s+(\d+)\s+(\d+)$/);
     if (!m) continue;
     let path = m[1];
     if (path.startsWith(MODULE_PREFIX)) path = path.slice(MODULE_PREFIX.length);
-    const [c, t] = files.get(path) ?? [0, 0];
-    files.set(path, [c + Number(m[4] > 0 ? m[3] : 0), t + Number(m[3])]);
+    const key = `${path}:${m[2]}:${m[3]}`;
+    const hit = Number(m[4]) > 0;
+    const b = blocks.get(key);
+    if (b) b.covered ||= hit;
+    else blocks.set(key, { file: path, n: Number(m[3]), covered: hit });
+  }
+  const files = new Map(); // file -> [coveredStmts, totalStmts]
+  for (const { file, n, covered } of blocks.values()) {
+    const [c, t] = files.get(file) ?? [0, 0];
+    files.set(file, [c + (covered ? n : 0), t + n]);
   }
   return files;
 }

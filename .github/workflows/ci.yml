@@ -5,6 +5,14 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+# Cancel stale runs on the same ref — only the latest push matters.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   go:
     name: Go — fmt / vet / test
@@ -23,22 +31,40 @@ jobs:
     env:
       DATABASE_URL: postgres://isppr:isppr@localhost:5432/isppr?sslmode=disable
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: true
+      - name: go.mod is tidy
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
       - name: gofmt
         run: test -z "$(gofmt -l $(git ls-files '*.go'))"
       - run: go vet ./cmd/... ./internal/...
       - run: go build ./cmd/... ./internal/...
+      - name: Vulnerability check
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          govulncheck ./cmd/... ./internal/...
       - name: go test (coverage)
-        run: go test -coverprofile=coverage.out ./cmd/... ./internal/...
-      - uses: actions/setup-node@v4
+        # -coverpkg scopes attribution to the source trees so tests that call
+        # sibling packages count those statements too.
+        run: |
+          coverpkg=$(go list -f '{{.ImportPath}}' ./cmd/... ./internal/... | tr '\n' ',' | sed 's/,$//')
+          go test -count=1 -timeout 10m -coverprofile=coverage.out -coverpkg="$coverpkg" . ./cmd/... ./internal/...
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
       - name: coverage floor (80%/area)
         run: node tools/covercheck.mjs coverage.out
+      - name: Upload Go coverage report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: go-coverage
+          path: coverage.out
+          retention-days: 2
 
   web:
     name: Web — lint / typecheck / test / build
@@ -47,8 +73,8 @@ jobs:
       run:
         working-directory: clients/web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
           cache: npm
@@ -56,8 +82,14 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
-      - run: npx vitest run --coverage
+      - run: npm run test:coverage
       - name: coverage floor (80%/area)
         working-directory: .
         run: node tools/covercheck.mjs clients/web/coverage/lcov.info
       - run: npm run build
+      - name: Upload web coverage report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: web-coverage
+          path: clients/web/coverage/lcov.info
+          retention-days: 2
