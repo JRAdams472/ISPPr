@@ -29,6 +29,26 @@ Non-negotiable invariants:
 - **Concurrent render fan-out** — documents in a package render in parallel
   against the Gotenberg pool (errgroup). Never serial per document.
 
+## Ticket Execution — Acceptance Criteria (required)
+
+- **Read the ticket first.** Before writing any code for an MPE ticket,
+  `linear.get_issue` it and read the FULL description — the **Scope** and
+  **Acceptance** bullets are the contract, not a suggestion. Never infer
+  scope from the ticket title or from the spec alone.
+- **Implement the Scope; prove the Acceptance.** Every Acceptance bullet
+  gets a real check — run the command, hit the endpoint, open the page —
+  not verification-by-inspection. If acceptance says "`docker compose up`
+  brings the stack healthy", you run it and capture the evidence.
+- **Stay in scope.** Groundwork for later tickets is fine when it falls out
+  naturally, but don't claim a later ticket done and don't let its scope
+  balloon the current diff. A ticket is done only when ITS acceptance is
+  green.
+- **Proof maps 1:1 to Acceptance bullets.** The completion comment on the
+  sub-issue addresses each bullet explicitly with run output.
+- **Re-verify when work overlaps.** If a ticket's scope was partially built
+  by an earlier change, re-check every bullet — partial coverage is not
+  done.
+
 ## Git Workflow
 
 - Each phase of a plan is developed on its own ticket-prefixed branch:

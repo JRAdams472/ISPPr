@@ -26,7 +26,16 @@ func New(cfg config.Config) *echo.Echo {
 	e.GET("/healthz", health)
 	e.GET("/api/health", health)
 
+	// Versioned API surface — feature routes land here in later phases
+	// (POST /packages/generate, admin CRUD).
+	v1 := e.Group("/api/v1")
+	v1.GET("/status", v1Status)
+
 	return e
+}
+
+func v1Status(c echo.Context) error {
+	return c.JSON(http.StatusOK, map[string]string{"api": "v1", "status": "ok"})
 }
 
 func health(c echo.Context) error {

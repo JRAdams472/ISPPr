@@ -1,9 +1,11 @@
 -- 0001_init.sql — multi-tenant DGE schema: clients, customers, API keys,
--- template masters/variants, and the generation-request audit/idempotency log.
+-- admin users, template masters/variants, and the generation-request
+-- audit/idempotency log. Aligned with the MPE-27 data-model contract.
 
 CREATE TABLE clients (
     id         TEXT PRIMARY KEY,             -- cli_*
     name       TEXT NOT NULL,
+    status     TEXT NOT NULL DEFAULT 'active', -- active | disabled
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -12,16 +14,31 @@ CREATE TABLE api_keys (
     client_id    TEXT NOT NULL REFERENCES clients (id),
     key_hash     TEXT NOT NULL UNIQUE,       -- sha-256 of the presented key
     label        TEXT NOT NULL DEFAULT '',
+    scopes       TEXT[] NOT NULL DEFAULT '{}', -- e.g. {generate, admin}
+    rotated_at   TIMESTAMPTZ,
     revoked_at   TIMESTAMPTZ,
     last_used_at TIMESTAMPTZ,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE customers (
-    id         TEXT PRIMARY KEY,             -- cust_*
-    client_id  TEXT NOT NULL REFERENCES clients (id),
-    name       TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    id           TEXT PRIMARY KEY,           -- cust_*
+    client_id    TEXT NOT NULL REFERENCES clients (id),
+    external_ref TEXT,                       -- caller's own customer handle
+    name         TEXT NOT NULL,
+    webhook_url  TEXT,                       -- optional async delivery target
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (client_id, external_ref)
+);
+
+-- Portal login users (admins, account managers, template developers).
+CREATE TABLE admin_users (
+    id            TEXT PRIMARY KEY,          -- adm_*
+    email         TEXT NOT NULL UNIQUE,
+    name          TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    role          TEXT NOT NULL DEFAULT 'developer', -- admin | manager | developer
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE template_masters (

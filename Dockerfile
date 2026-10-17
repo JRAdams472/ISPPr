@@ -3,11 +3,11 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -o /bin/api ./cmd/api
+RUN CGO_ENABLED=0 go build -o /bin/dge-api ./cmd/dge-api
 
 FROM alpine:3.21
 RUN adduser -D -u 10001 app
 USER app
-COPY --from=build /bin/api /bin/api
-EXPOSE 8080
-ENTRYPOINT ["/bin/api"]
+COPY --from=build /bin/dge-api /bin/dge-api
+EXPOSE 8090
+ENTRYPOINT ["/bin/dge-api"]

@@ -24,7 +24,7 @@ short-lived presigned download URL. Full spec: [`projectplan.md`](projectplan.md
 docker compose up --build          # db + gotenberg + minio + api + web
 # or, API only (hot reload):
 docker compose up db gotenberg minio -d
-go run ./cmd/api
+go run ./cmd/dge-api
 ```
 
 Web UI: http://localhost:3000 · API: http://localhost:8090 (`/healthz`,
@@ -40,12 +40,40 @@ gofmt -l cmd internal && go vet ./cmd/... ./internal/... && go test ./cmd/... ./
 cd clients/web && npm run lint && npm run typecheck && npm test && npm run build
 ```
 
+CI (`.github/workflows/ci.yml`) runs both jobs on every PR + push to `main`
+— these are the repo's required checks. Branch protection isn't available
+on the private free tier, so requiredness is enforced by workflow rule
+(see `AGENTS.md`).
+
+## Tasks
+
+```bash
+# build
+go build ./cmd/... ./internal/...
+docker compose build
+
+# test
+go test ./cmd/... ./internal/...           # add -coverprofile=coverage.out for SonarQube
+cd clients/web && npm test                 # npm run test:coverage emits lcov.info
+
+# migrate (lands in MPE-27 — golang-migrate applies migrations/ at api boot)
+# interim: docker compose exec db psql -U isppr -d isppr -f - < migrations/0001_init.sql
+
+# sonarqube scan (local instance on :9000 — shared lena2-sonarqube)
+go test -coverprofile=coverage.out ./cmd/... ./internal/...
+(cd clients/web && npm run test:coverage)
+docker run --rm --network host -e SONAR_HOST_URL=http://localhost:9000 \
+  -e SONAR_TOKEN=<token> -v "$PWD:/usr/src" sonarsource/sonar-scanner-cli
+```
+
 ## Layout
 
-- `cmd/api/` — Go API entrypoint
-- `internal/` — server, config, sqlc store (`queries/` are sqlc inputs)
+- `cmd/dge-api/` — Go API entrypoint
+- `internal/` — `config`, `server`, `store` (sqlc), plus domain stubs
+  `tenancy`, `templates`, `render`, `jobs`, `storage`, `admin`
 - `migrations/` — append-only SQL migrations
 - `clients/web/` — Next.js admin portal
+- `seed/` — demo data (MPE-27) · `e2e/` — Playwright suite (MPE-46) · `docs/`
 - `projectplan.md` — DGE specification
 
 ## Status
