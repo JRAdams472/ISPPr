@@ -21,7 +21,7 @@ jobs:
           --health-cmd "pg_isready -U isppr -d isppr"
           --health-interval 5s --health-timeout 3s --health-retries 12
     env:
-      DATABASE_URL: postgres://isppr:isppr@localhost:5432/isppr
+      DATABASE_URL: postgres://isppr:isppr@localhost:5432/isppr?sslmode=disable
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -29,10 +29,16 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: gofmt
-        run: test -z "$(gofmt -l cmd internal)"
+        run: test -z "$(gofmt -l $(git ls-files '*.go'))"
       - run: go vet ./cmd/... ./internal/...
       - run: go build ./cmd/... ./internal/...
-      - run: go test ./cmd/... ./internal/...
+      - name: go test (coverage)
+        run: go test -coverprofile=coverage.out ./cmd/... ./internal/...
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: coverage floor (80%/area)
+        run: node tools/covercheck.mjs coverage.out
 
   web:
     name: Web — lint / typecheck / test / build
@@ -50,5 +56,8 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
-      - run: npm test
+      - run: npx vitest run --coverage
+      - name: coverage floor (80%/area)
+        working-directory: .
+        run: node tools/covercheck.mjs clients/web/coverage/lcov.info
       - run: npm run build

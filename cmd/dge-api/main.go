@@ -11,12 +11,33 @@ import (
 
 	"github.com/jradams472/isppr/internal/config"
 	"github.com/jradams472/isppr/internal/server"
+	"github.com/jradams472/isppr/internal/store"
 )
 
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("config: %v", err)
+	}
+
+	// Migrations are append-only and applied at boot; the process refuses to
+	// serve on a schema it can't reach.
+	if err := store.RunMigrations(cfg.DatabaseURL); err != nil {
+		log.Fatalf("migrate: %v", err)
+	}
+
+	if cfg.RunSeed {
+		ctx := context.Background()
+		pool, err := store.NewPool(ctx, cfg.DatabaseURL)
+		if err != nil {
+			log.Fatalf("seed connect: %v", err)
+		}
+		if err := store.Seed(ctx, pool); err != nil {
+			pool.Close()
+			log.Fatalf("seed: %v", err)
+		}
+		pool.Close()
+		log.Print("seed: demo tenant applied")
 	}
 
 	e := server.New(cfg)

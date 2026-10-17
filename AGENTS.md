@@ -48,6 +48,12 @@ Non-negotiable invariants:
 - **Re-verify when work overlaps.** If a ticket's scope was partially built
   by an earlier change, re-check every bullet — partial coverage is not
   done.
+- **Plan-comment for ambiguous tickets.** Mechanical tickets (clear scope,
+  no design choices) go straight to implementation. When a ticket has a
+  real design decision (library choice, queue/async semantics, delivery
+  contracts), post a short implementation plan as a comment on the Linear
+  sub-issue when marking it In Progress, so the approach can be redirected
+  before code lands.
 
 ## Git Workflow
 
@@ -137,3 +143,20 @@ gofmt -l cmd internal && go vet ./cmd/... ./internal/... && go test ./cmd/... ./
 cd clients/web && npm run lint && npm run typecheck && npm test && npm run build
 docker compose up --build        # db + gotenberg + minio + api + web
 ```
+
+## Coverage Policy (enforced in CI)
+
+- **Floor: 80% per code area** — `tools/covercheck.mjs` groups coverage by
+  directory (`internal/<pkg>`, `clients/web/<dir>`); any area below 80%
+  fails the build. Uniformity matters: no ten endpoints at 100% and one
+  at 0%.
+- **Goal: 95% overall** — reported by covercheck, directional only.
+- **Exempt:** generated files (`// Code generated … DO NOT EDIT`,
+  `*.sql.go`), test files (`*_test.go`, `*.test.*`, `*.spec.*`,
+  `__tests__/`), and `cmd/**` composition roots (wiring verified via
+  compose/e2e, not unit tests).
+- Run locally:
+  `go test -coverprofile=coverage.out ./cmd/... ./internal/...` →
+  `node tools/covercheck.mjs coverage.out`; for web,
+  `npx vitest run --coverage` →
+  `node tools/covercheck.mjs clients/web/coverage/lcov.info`.

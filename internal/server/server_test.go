@@ -11,7 +11,7 @@ import (
 func TestHealth(t *testing.T) {
 	e := New(config.Config{CORSOrigin: "http://localhost:3000"})
 
-	for _, path := range []string{"/healthz", "/api/health"} {
+	for _, path := range []string{"/healthz", "/api/health", "/api/v1/status"} {
 		rec := httptest.NewRecorder()
 		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 		if rec.Code != http.StatusOK {
