@@ -1,0 +1,11 @@
+@import "tailwindcss";
+
+/* GitHub-dark palette, matching the MPEx admin theme. */
+:root {
+  color-scheme: dark;
+}
+
+body {
+  background: #0d1117;
+  color: #e6edf3;
+}
