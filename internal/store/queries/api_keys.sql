@@ -6,6 +6,9 @@ RETURNING *;
 -- name: GetAPIKeyByHash :one
 SELECT * FROM api_keys WHERE key_hash = $1;
 
+-- name: GetAPIKey :one
+SELECT * FROM api_keys WHERE id = $1;
+
 -- name: ListAPIKeysForClient :many
 SELECT * FROM api_keys WHERE client_id = $1 ORDER BY created_at;
 

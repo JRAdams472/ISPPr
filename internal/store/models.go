@@ -8,6 +8,14 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AdminSession struct {
+	ID          string             `json:"id"`
+	AdminUserID string             `json:"admin_user_id"`
+	TokenHash   string             `json:"token_hash"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type AdminUser struct {
 	ID           string             `json:"id"`
 	Email        string             `json:"email"`

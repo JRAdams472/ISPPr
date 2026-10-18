@@ -5,3 +5,6 @@ RETURNING *;
 
 -- name: GetAdminUserByEmail :one
 SELECT * FROM admin_users WHERE email = $1;
+
+-- name: GetAdminUser :one
+SELECT * FROM admin_users WHERE id = $1;

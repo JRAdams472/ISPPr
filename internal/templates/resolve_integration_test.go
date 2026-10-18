@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,8 +33,12 @@ func testQueries(t *testing.T) (*store.Queries, *pgxpool.Pool) {
 	return store.New(pool), pool
 }
 
+var tidSeq atomic.Int64
+
 func tid(prefix string) string {
-	return fmt.Sprintf("%s_t%d", prefix, time.Now().UnixNano()%1_000_000_000)
+	// Windows wall-clock granularity is ~15ms — sequence guards rapid calls.
+	return fmt.Sprintf("%s_t%d_%d", prefix,
+		time.Now().UnixNano()%1_000_000_000, tidSeq.Add(1))
 }
 
 // Full documented chain: master persists, versions resolve latest-first,

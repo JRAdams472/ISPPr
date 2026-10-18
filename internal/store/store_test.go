@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -33,8 +34,12 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
+var testSeq atomic.Int64
+
 func testID(prefix string) string {
-	return fmt.Sprintf("%s_t%d", prefix, time.Now().UnixNano()%1_000_000_000)
+	// Windows clock granularity is ~15ms — sequence guards rapid calls.
+	return fmt.Sprintf("%s_t%d_%d", prefix,
+		time.Now().UnixNano()%1_000_000_000, testSeq.Add(1))
 }
 
 func sha256hex(s string) string {

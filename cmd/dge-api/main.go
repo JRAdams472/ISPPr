@@ -26,21 +26,21 @@ func main() {
 		log.Fatalf("migrate: %v", err)
 	}
 
+	// Single pool for the request path (queries + admin sessions).
+	pool, err := store.NewPool(context.Background(), cfg.DatabaseURL)
+	if err != nil {
+		log.Fatalf("db connect: %v", err)
+	}
+	defer pool.Close()
+
 	if cfg.RunSeed {
-		ctx := context.Background()
-		pool, err := store.NewPool(ctx, cfg.DatabaseURL)
-		if err != nil {
-			log.Fatalf("seed connect: %v", err)
-		}
-		if err := store.Seed(ctx, pool); err != nil {
-			pool.Close()
+		if err := store.Seed(context.Background(), pool); err != nil {
 			log.Fatalf("seed: %v", err)
 		}
-		pool.Close()
 		log.Print("seed: demo tenant applied")
 	}
 
-	e := server.New(cfg)
+	e := server.New(cfg, store.New(pool), pool)
 
 	go func() {
 		if err := e.Start(":" + cfg.Port); err != nil && !errors.Is(err, http.ErrServerClosed) {

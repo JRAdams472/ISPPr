@@ -43,6 +43,24 @@ func (q *Queries) CreateAdminUser(ctx context.Context, arg CreateAdminUserParams
 	return i, err
 }
 
+const getAdminUser = `-- name: GetAdminUser :one
+SELECT id, email, name, password_hash, role, created_at FROM admin_users WHERE id = $1
+`
+
+func (q *Queries) GetAdminUser(ctx context.Context, id string) (AdminUser, error) {
+	row := q.db.QueryRow(ctx, getAdminUser, id)
+	var i AdminUser
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Name,
+		&i.PasswordHash,
+		&i.Role,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getAdminUserByEmail = `-- name: GetAdminUserByEmail :one
 SELECT id, email, name, password_hash, role, created_at FROM admin_users WHERE email = $1
 `
