@@ -6,6 +6,10 @@ RETURNING *;
 -- name: GetAPIKeyByHash :one
 SELECT * FROM api_keys WHERE key_hash = $1;
 
+-- name: GetActiveAPIKeyByHash :one
+-- Auth-path lookup: revoked keys never resolve.
+SELECT * FROM api_keys WHERE key_hash = $1 AND revoked_at IS NULL;
+
 -- name: GetAPIKey :one
 SELECT * FROM api_keys WHERE id = $1;
 
