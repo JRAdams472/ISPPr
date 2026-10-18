@@ -12,3 +12,15 @@ SELECT * FROM customers WHERE client_id = $1 AND external_ref = $2;
 
 -- name: ListCustomersForClient :many
 SELECT * FROM customers WHERE client_id = $1 ORDER BY created_at;
+
+-- name: GetCustomer :one
+-- Admin-scoped read (management API); tenant paths use GetCustomerForClient.
+SELECT * FROM customers WHERE id = $1;
+
+-- name: UpdateCustomer :one
+UPDATE customers
+SET name = coalesce(sqlc.narg(name), name),
+    external_ref = coalesce(sqlc.narg(external_ref), external_ref),
+    webhook_url = coalesce(sqlc.narg(webhook_url), webhook_url)
+WHERE id = sqlc.arg(id)
+RETURNING *;

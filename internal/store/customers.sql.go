@@ -45,6 +45,25 @@ func (q *Queries) CreateCustomer(ctx context.Context, arg CreateCustomerParams) 
 	return i, err
 }
 
+const getCustomer = `-- name: GetCustomer :one
+SELECT id, client_id, external_ref, name, webhook_url, created_at FROM customers WHERE id = $1
+`
+
+// Admin-scoped read (management API); tenant paths use GetCustomerForClient.
+func (q *Queries) GetCustomer(ctx context.Context, id string) (Customer, error) {
+	row := q.db.QueryRow(ctx, getCustomer, id)
+	var i Customer
+	err := row.Scan(
+		&i.ID,
+		&i.ClientID,
+		&i.ExternalRef,
+		&i.Name,
+		&i.WebhookUrl,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getCustomerByExternalRef = `-- name: GetCustomerByExternalRef :one
 SELECT id, client_id, external_ref, name, webhook_url, created_at FROM customers WHERE client_id = $1 AND external_ref = $2
 `
@@ -121,4 +140,39 @@ func (q *Queries) ListCustomersForClient(ctx context.Context, clientID string) (
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateCustomer = `-- name: UpdateCustomer :one
+UPDATE customers
+SET name = coalesce($1, name),
+    external_ref = coalesce($2, external_ref),
+    webhook_url = coalesce($3, webhook_url)
+WHERE id = $4
+RETURNING id, client_id, external_ref, name, webhook_url, created_at
+`
+
+type UpdateCustomerParams struct {
+	Name        pgtype.Text `json:"name"`
+	ExternalRef pgtype.Text `json:"external_ref"`
+	WebhookUrl  pgtype.Text `json:"webhook_url"`
+	ID          string      `json:"id"`
+}
+
+func (q *Queries) UpdateCustomer(ctx context.Context, arg UpdateCustomerParams) (Customer, error) {
+	row := q.db.QueryRow(ctx, updateCustomer,
+		arg.Name,
+		arg.ExternalRef,
+		arg.WebhookUrl,
+		arg.ID,
+	)
+	var i Customer
+	err := row.Scan(
+		&i.ID,
+		&i.ClientID,
+		&i.ExternalRef,
+		&i.Name,
+		&i.WebhookUrl,
+		&i.CreatedAt,
+	)
+	return i, err
 }

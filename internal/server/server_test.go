@@ -9,7 +9,7 @@ import (
 )
 
 func TestHealth(t *testing.T) {
-	e := New(config.Config{CORSOrigin: "http://localhost:3000"})
+	e := New(config.Config{CORSOrigin: "http://localhost:3000"}, nil, nil)
 
 	for _, path := range []string{"/healthz", "/api/health", "/api/v1/status"} {
 		rec := httptest.NewRecorder()

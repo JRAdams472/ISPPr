@@ -160,6 +160,39 @@ func (q *Queries) ListMasters(ctx context.Context, clientID string) ([]TemplateM
 	return items, nil
 }
 
+const listVariantsForCustomer = `-- name: ListVariantsForCustomer :many
+SELECT id, master_id, customer_id, overlay, created_at, updated_at FROM template_variants
+WHERE customer_id = $1
+ORDER BY created_at
+`
+
+func (q *Queries) ListVariantsForCustomer(ctx context.Context, customerID string) ([]TemplateVariant, error) {
+	rows, err := q.db.Query(ctx, listVariantsForCustomer, customerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TemplateVariant
+	for rows.Next() {
+		var i TemplateVariant
+		if err := rows.Scan(
+			&i.ID,
+			&i.MasterID,
+			&i.CustomerID,
+			&i.Overlay,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const nextMasterVersion = `-- name: NextMasterVersion :one
 SELECT coalesce(max(version), 0) + 1 AS next_version
 FROM template_masters

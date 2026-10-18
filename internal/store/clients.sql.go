@@ -7,6 +7,8 @@ package store
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createClient = `-- name: CreateClient :one
@@ -108,6 +110,32 @@ type SetClientStatusParams struct {
 
 func (q *Queries) SetClientStatus(ctx context.Context, arg SetClientStatusParams) (Client, error) {
 	row := q.db.QueryRow(ctx, setClientStatus, arg.ID, arg.Status)
+	var i Client
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Status,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const updateClient = `-- name: UpdateClient :one
+UPDATE clients
+SET name = coalesce($1, name),
+    status = coalesce($2, status)
+WHERE id = $3
+RETURNING id, name, status, created_at
+`
+
+type UpdateClientParams struct {
+	Name   pgtype.Text `json:"name"`
+	Status pgtype.Text `json:"status"`
+	ID     string      `json:"id"`
+}
+
+func (q *Queries) UpdateClient(ctx context.Context, arg UpdateClientParams) (Client, error) {
+	row := q.db.QueryRow(ctx, updateClient, arg.Name, arg.Status, arg.ID)
 	var i Client
 	err := row.Scan(
 		&i.ID,

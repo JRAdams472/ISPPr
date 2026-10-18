@@ -41,3 +41,8 @@ JOIN template_masters m ON m.id = v.master_id
 WHERE m.client_id = $1 AND m.name = $2 AND v.customer_id = $3
 ORDER BY m.version DESC
 LIMIT 1;
+
+-- name: ListVariantsForCustomer :many
+SELECT * FROM template_variants
+WHERE customer_id = $1
+ORDER BY created_at;

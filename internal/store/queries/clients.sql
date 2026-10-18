@@ -17,3 +17,10 @@ SELECT * FROM clients ORDER BY created_at;
 -- name: SetClientStatus :one
 UPDATE clients SET status = $2 WHERE id = $1
 RETURNING *;
+
+-- name: UpdateClient :one
+UPDATE clients
+SET name = coalesce(sqlc.narg(name), name),
+    status = coalesce(sqlc.narg(status), status)
+WHERE id = sqlc.arg(id)
+RETURNING *;

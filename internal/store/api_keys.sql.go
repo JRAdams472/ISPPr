@@ -46,6 +46,27 @@ func (q *Queries) CreateAPIKey(ctx context.Context, arg CreateAPIKeyParams) (Api
 	return i, err
 }
 
+const getAPIKey = `-- name: GetAPIKey :one
+SELECT id, client_id, key_hash, label, scopes, rotated_at, revoked_at, last_used_at, created_at FROM api_keys WHERE id = $1
+`
+
+func (q *Queries) GetAPIKey(ctx context.Context, id string) (ApiKey, error) {
+	row := q.db.QueryRow(ctx, getAPIKey, id)
+	var i ApiKey
+	err := row.Scan(
+		&i.ID,
+		&i.ClientID,
+		&i.KeyHash,
+		&i.Label,
+		&i.Scopes,
+		&i.RotatedAt,
+		&i.RevokedAt,
+		&i.LastUsedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getAPIKeyByHash = `-- name: GetAPIKeyByHash :one
 SELECT id, client_id, key_hash, label, scopes, rotated_at, revoked_at, last_used_at, created_at FROM api_keys WHERE key_hash = $1
 `
