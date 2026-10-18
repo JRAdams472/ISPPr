@@ -11,6 +11,10 @@ WHERE client_id = $1 AND name = $2;
 -- name: GetMaster :one
 SELECT * FROM template_masters WHERE id = $1;
 
+-- name: GetMasterForClient :one
+-- Tenant-scoped read: a master is only visible to its owning client.
+SELECT * FROM template_masters WHERE id = $1 AND client_id = $2;
+
 -- name: GetLatestMaster :one
 SELECT * FROM template_masters
 WHERE client_id = $1 AND name = $2

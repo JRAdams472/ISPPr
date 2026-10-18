@@ -100,6 +100,33 @@ func (q *Queries) GetMaster(ctx context.Context, id string) (TemplateMaster, err
 	return i, err
 }
 
+const getMasterForClient = `-- name: GetMasterForClient :one
+SELECT id, client_id, name, html, css, created_at, updated_at, version, defaults FROM template_masters WHERE id = $1 AND client_id = $2
+`
+
+type GetMasterForClientParams struct {
+	ID       string `json:"id"`
+	ClientID string `json:"client_id"`
+}
+
+// Tenant-scoped read: a master is only visible to its owning client.
+func (q *Queries) GetMasterForClient(ctx context.Context, arg GetMasterForClientParams) (TemplateMaster, error) {
+	row := q.db.QueryRow(ctx, getMasterForClient, arg.ID, arg.ClientID)
+	var i TemplateMaster
+	err := row.Scan(
+		&i.ID,
+		&i.ClientID,
+		&i.Name,
+		&i.Html,
+		&i.Css,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Version,
+		&i.Defaults,
+	)
+	return i, err
+}
+
 const getVariant = `-- name: GetVariant :one
 SELECT id, master_id, customer_id, overlay, created_at, updated_at FROM template_variants
 WHERE master_id = $1 AND customer_id = $2

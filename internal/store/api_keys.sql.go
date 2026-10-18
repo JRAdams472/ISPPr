@@ -88,6 +88,28 @@ func (q *Queries) GetAPIKeyByHash(ctx context.Context, keyHash string) (ApiKey, 
 	return i, err
 }
 
+const getActiveAPIKeyByHash = `-- name: GetActiveAPIKeyByHash :one
+SELECT id, client_id, key_hash, label, scopes, rotated_at, revoked_at, last_used_at, created_at FROM api_keys WHERE key_hash = $1 AND revoked_at IS NULL
+`
+
+// Auth-path lookup: revoked keys never resolve.
+func (q *Queries) GetActiveAPIKeyByHash(ctx context.Context, keyHash string) (ApiKey, error) {
+	row := q.db.QueryRow(ctx, getActiveAPIKeyByHash, keyHash)
+	var i ApiKey
+	err := row.Scan(
+		&i.ID,
+		&i.ClientID,
+		&i.KeyHash,
+		&i.Label,
+		&i.Scopes,
+		&i.RotatedAt,
+		&i.RevokedAt,
+		&i.LastUsedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const listAPIKeysForClient = `-- name: ListAPIKeysForClient :many
 SELECT id, client_id, key_hash, label, scopes, rotated_at, revoked_at, last_used_at, created_at FROM api_keys WHERE client_id = $1 ORDER BY created_at
 `
