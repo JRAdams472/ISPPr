@@ -95,4 +95,88 @@ func TestResolveBadMasterJSON(t *testing.T) {
 	}
 }
 
+// Variant-introduced keys (absent from master defaults) still land in the
+// resolved context — overlays may declare toggles the master never seeded.
+func TestVariantIntroducesKeys(t *testing.T) {
+	ov := &Overlay{
+		Toggles:  map[string]bool{"banner": true},
+		Branding: map[string]string{"watermark": "v/wm.png"},
+	}
+	got, err := Resolve(Resolved{HTML: "b", CSS: "b{}"}, master(), ov)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := got.Context["blocks"].(map[string]bool)
+	if !b["banner"] || !b["header"] {
+		t.Fatalf("introduced/inherited toggles: %+v", b)
+	}
+	if got.Context["branding"].(map[string]string)["watermark"] != "v/wm.png" {
+		t.Fatalf("introduced branding: %+v", got.Context["branding"])
+	}
+}
+
+// Empty layers contribute nothing: no stray separators, no empty context keys.
+func TestEmptyLayersSkipped(t *testing.T) {
+	base := Resolved{HTML: "b", CSS: "base{}"}
+	m := master()
+	m.Css = ""
+	got, err := Resolve(base, m, &Overlay{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CSS != "base{}" {
+		t.Fatalf("empty css layers joined: %q", got.CSS)
+	}
+}
+
+// A base that already carries context keeps it — blocks/branding merge in,
+// not over.
+func TestBaseContextPreserved(t *testing.T) {
+	base := Resolved{
+		HTML:    "b",
+		CSS:     "b{}",
+		Context: map[string]any{"engine": "dge"},
+	}
+	got, err := Resolve(base, master(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Context["engine"] != "dge" || got.Context["blocks"] == nil {
+		t.Fatalf("base context lost: %+v", got.Context)
+	}
+}
+
+func TestParseOverlayBadJSON(t *testing.T) {
+	if _, err := ParseOverlay(json.RawMessage(`{nope`)); err == nil {
+		t.Fatal("expected error on malformed overlay")
+	}
+}
+
+func TestParseDefaultsEmpty(t *testing.T) {
+	d, err := ParseDefaults(nil)
+	if err != nil || d.Toggles != nil || d.Branding != nil {
+		t.Fatalf("empty defaults: %+v %v", d, err)
+	}
+}
+
+// The Handlebars-stage contract: resolved context merges under caller data,
+// caller keys win.
+func TestContextWith(t *testing.T) {
+	r := Resolved{Context: map[string]any{
+		"blocks":   map[string]bool{"header": true},
+		"branding": map[string]string{"logo": "m/l.png"},
+	}}
+	merged := r.ContextWith(map[string]any{"title": "Hi", "blocks": "caller"})
+	if merged["title"] != "Hi" || merged["blocks"] != "caller" {
+		t.Fatalf("caller precedence: %+v", merged)
+	}
+	if merged["branding"] == nil {
+		t.Fatalf("resolved key lost: %+v", merged)
+	}
+	// nil data / nil context both safe.
+	if got := (Resolved{}).ContextWith(nil); len(got) != 0 {
+		t.Fatalf("empty merge: %+v", got)
+	}
+}
+
 // ResolveFor needs a live DB — see resolve_integration_test.go.

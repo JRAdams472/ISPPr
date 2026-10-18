@@ -27,7 +27,9 @@ customer variant ──overlays──▶ client master ──falls back to──
 3. `Resolve(base, master, overlay)` merges per the semantics below.
 
 `ResolveFor` is the single entry point generation code calls — never query
-masters/variants directly in a render path.
+masters/variants directly in a render path. `Resolved.ContextWith(data)`
+performs the final merge for the Handlebars stage: resolved `blocks`/
+`branding` go under the caller's payload, which wins per top-level key.
 
 ## Merge semantics
 

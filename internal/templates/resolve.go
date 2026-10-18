@@ -105,6 +105,21 @@ func Resolve(base Resolved, master *store.TemplateMaster, ov *Overlay) (Resolved
 	return out, nil
 }
 
+// ContextWith returns the render context for the Handlebars stage (MPE-33):
+// resolved context (blocks/branding) merged under the caller's data —
+// caller keys win per top-level key, so payload fields can always shadow
+// resolved context.
+func (r Resolved) ContextWith(data map[string]any) map[string]any {
+	merged := make(map[string]any, len(r.Context)+len(data))
+	for k, v := range r.Context {
+		merged[k] = v
+	}
+	for k, v := range data {
+		merged[k] = v
+	}
+	return merged
+}
+
 // ResolveFor runs the full lookup chain for (client, customer, template
 // name): latest master version, then the customer's variant (attached to
 // any version of that name), falling back to the embedded base when the
