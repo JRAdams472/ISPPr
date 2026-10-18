@@ -163,6 +163,45 @@ func TestTenantAuth_RevokedKey(t *testing.T) {
 	}
 }
 
+// Rotated keys are the model's "expired" case: rotation replaces the stored
+// hash, so previously-issued material stops resolving (no expires_at column
+// by design — revocation/rotation is the expiry mechanism).
+func TestTenantAuth_RotatedKey(t *testing.T) {
+	e, q := testEnv(t)
+	f := seedTenants(t, q)
+	ctx := context.Background()
+	old, err := q.GetAPIKeyByHash(ctx, sha256hex(f.keyA))
+	if err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if _, err := q.RotateAPIKey(ctx, store.RotateAPIKeyParams{
+		ID: old.ID, KeyHash: sha256hex("new_" + tid("p")),
+	}); err != nil {
+		t.Fatalf("rotate: %v", err)
+	}
+	code, _, _ := pingReq(t, e, f.keyA) // old plaintext
+	if code != http.StatusUnauthorized {
+		t.Fatalf("rotated key: want 401, got %d", code)
+	}
+}
+
+func TestTenantAuth_DisabledClient(t *testing.T) {
+	e, q := testEnv(t)
+	f := seedTenants(t, q)
+	if _, err := q.SetClientStatus(context.Background(), store.SetClientStatusParams{
+		ID: f.clientA, Status: "suspended",
+	}); err != nil {
+		t.Fatalf("suspend: %v", err)
+	}
+	code, ct, _ := pingReq(t, e, f.keyA)
+	if code != http.StatusForbidden {
+		t.Fatalf("disabled tenant: want 403, got %d", code)
+	}
+	if ct != "application/problem+json" {
+		t.Fatalf("want problem+json, got %q", ct)
+	}
+}
+
 func TestTenantAuth_MissingScope(t *testing.T) {
 	e, q := testEnv(t)
 	f := seedTenants(t, q)
