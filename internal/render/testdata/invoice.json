@@ -1,0 +1,14 @@
+{
+  "blocks": {"header": true},
+  "branding": {"logo": "brand/logo.png", "company": "Demo Corp"},
+  "number": "INV-1042",
+  "lineItems": [
+    {"desc": "setup fee", "price": 250},
+    {"desc": "monthly service", "price": 999.5}
+  ],
+  "total": 1249.5,
+  "due": "2026-03-01T00:00:00Z",
+  "status": "open",
+  "overdue": false,
+  "terms": ["net-30", "late fee applies"]
+}

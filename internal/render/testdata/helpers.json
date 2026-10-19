@@ -1,0 +1,15 @@
+{
+  "a": 3,
+  "b": 3,
+  "yes": true,
+  "no": false,
+  "name": "john DOE",
+  "words": ["a", "b", "c"],
+  "single": ["solo"],
+  "stamp": "2026-12-25T10:00:00Z",
+  "stampUnix": 1767225600,
+  "bad": "not a date",
+  "cents": 1234.5,
+  "neg": -42.1,
+  "word": "abc"
+}
