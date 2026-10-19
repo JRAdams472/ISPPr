@@ -48,11 +48,31 @@ func main() {
 	if err != nil {
 		log.Fatalf("render pool: %v", err)
 	}
-	orch := jobs.New(store.New(pool), rpool,
-		&storage.LocalStore{Dir: cfg.StorageDir},
+
+	var backend storage.Backend
+	switch cfg.StorageBackend {
+	case "s3":
+		s3, err := storage.NewS3(context.Background(), storage.S3Config{
+			Endpoint:       cfg.S3Endpoint,
+			PublicEndpoint: cfg.S3PublicEndpoint,
+			Bucket:         cfg.S3Bucket,
+			AccessKey:      cfg.S3AccessKey,
+			SecretKey:      cfg.S3SecretKey,
+			Region:         cfg.S3Region,
+			PresignTTL:     cfg.S3PresignTTL,
+		})
+		if err != nil {
+			log.Fatalf("s3 store: %v", err)
+		}
+		backend = s3
+	default:
+		backend = &storage.LocalStore{Dir: cfg.StorageDir}
+	}
+	orch := jobs.New(store.New(pool), rpool, backend,
 		jobs.WithMaxDocs(cfg.MaxDocsPerPkg),
 		jobs.WithSyncBudget(cfg.SyncBudget),
-		jobs.WithWorkers(cfg.WorkerCount))
+		jobs.WithWorkers(cfg.WorkerCount),
+		jobs.WithSingleDocSkipZip(cfg.SingleDocSkipZip))
 	go orch.Start(context.Background())
 
 	e := server.New(cfg, store.New(pool), pool, orch)

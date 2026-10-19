@@ -71,7 +71,16 @@ resolve → Handlebars → Gotenberg PDF → ZIP → storage.
 
 ### GET /{request_id}/download
 
-Tenant-scoped `application/zip` of the package. Filename is
-`{package_name}_{request_id}.zip`; documents are `NN_{template}.pdf` inside.
-In dev the storage backend is local fs (`STORAGE_LOCAL_DIR`); S3/MinIO with
-presigned URLs replaces it in MPE-36 behind the same route.
+Tenant-scoped download. With `STORAGE_BACKEND=s3` the route **302-redirects
+to a fresh presigned URL** (minted against `S3_PUBLIC_ENDPOINT`, valid for
+`S3_URL_TTL_MINUTES` — the spec's 15-minute TTL); the bucket also carries a
+1-day lifecycle-expiry backstop. With `local` it streams the bytes directly
+(`application/zip` or `application/pdf`).
+
+The `results.download_url` in 201/status responses is the presigned URL
+itself under s3 — re-minted on every read, never persisted — or the tenant
+route path under local.
+
+`output_type` is `ZIP` (`{name}_{request_id}.zip`, documents inside as
+`NN_{template}.pdf`), or `PDF` (`{name}_{request_id}.pdf`) for
+single-document packages when `SINGLE_DOC_SKIP_ZIP=1`.

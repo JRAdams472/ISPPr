@@ -53,15 +53,22 @@ type Results struct {
 	DownloadURL string `json:"download_url"`
 }
 
+// Output types surfaced in results.output_type.
+const (
+	OutputZIP = "ZIP"
+	OutputPDF = "PDF"
+)
+
 // Orchestrator owns the generation pipeline: enqueue, worker pool, sync
 // fast-path wait.
 type Orchestrator struct {
-	q       *store.Queries
-	pool    *render.Pool
-	store   storage.Backend
-	maxDocs int
-	budget  time.Duration
-	workers int
+	q             *store.Queries
+	pool          *render.Pool
+	store         storage.Backend
+	maxDocs       int
+	budget        time.Duration
+	workers       int
+	skipZipSingle bool
 
 	wake chan struct{}
 	done sync.Map // requestID → chan struct{}
@@ -90,6 +97,7 @@ type Option func(*Orchestrator)
 func WithMaxDocs(n int) Option              { return func(o *Orchestrator) { o.maxDocs = n } }
 func WithSyncBudget(d time.Duration) Option { return func(o *Orchestrator) { o.budget = d } }
 func WithWorkers(n int) Option              { return func(o *Orchestrator) { o.workers = n } }
+func WithSingleDocSkipZip(on bool) Option   { return func(o *Orchestrator) { o.skipZipSingle = on } }
 
 // New builds an orchestrator over the shared dependencies.
 func New(q *store.Queries, pool *render.Pool, st storage.Backend, opts ...Option) *Orchestrator {
@@ -294,16 +302,22 @@ func (o *Orchestrator) execute(ctx context.Context, job store.GenerationJob) {
 		return
 	}
 
-	// Zip + store (compression stage).
+	// Package + store (compression stage). SINGLE_DOC_SKIP_ZIP uploads a
+	// lone PDF raw — output_type PDF per the ticket's acceptance.
 	compressing := time.Now()
-	filename := filenameFor(req.PackageName, req.ID)
+	raw := o.skipZipSingle && len(results) == 1
+	filename := ArtifactName(req.PackageName, req.ID, raw)
 	key := req.ID + "/" + filename
-	zipBuf, err := zipResults(results)
-	if err != nil {
-		fail(fmt.Errorf("zip: %w", err), false)
-		return
+	var data []byte
+	if raw {
+		data = results[0].PDF
+	} else {
+		if data, err = zipResults(results); err != nil {
+			fail(fmt.Errorf("zip: %w", err), false)
+			return
+		}
 	}
-	if err := o.store.Put(ctx, key, bytes.NewReader(zipBuf)); err != nil {
+	if err := o.store.Put(ctx, key, bytes.NewReader(data)); err != nil {
 		fail(fmt.Errorf("store output: %w", err), true)
 		return
 	}
@@ -359,9 +373,31 @@ func zipResults(results []render.Result) ([]byte, error) {
 
 var unsafeNameChars = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
 
-// filenameFor builds "{Package_Name}_{request_id}.zip".
-func filenameFor(pkg, requestID string) string {
-	return sanitize(pkg) + "_" + requestID + ".zip"
+// ArtifactName builds "{Package_Name}_{request_id}.{zip|pdf}" — the
+// spec's naming convention for stored artifacts.
+func ArtifactName(pkg, requestID string, rawPDF bool) string {
+	ext := ".zip"
+	if rawPDF {
+		ext = ".pdf"
+	}
+	return sanitize(pkg) + "_" + requestID + ext
+}
+
+// artifactBase strips the request prefix from a stored output key.
+func artifactBase(key string) string {
+	if i := strings.LastIndex(key, "/"); i != -1 {
+		return key[i+1:]
+	}
+	return key
+}
+
+// outputTypeFor derives the response's output_type from the stored
+// artifact extension.
+func outputTypeFor(key string) string {
+	if strings.HasSuffix(key, ".pdf") {
+		return OutputPDF
+	}
+	return OutputZIP
 }
 
 func sanitize(s string) string {
