@@ -35,6 +35,39 @@ func TestLoadOverrides(t *testing.T) {
 	}
 }
 
+func TestGotenbergEndpoints(t *testing.T) {
+	t.Setenv("GOTENBERG_URL", "http://gb:3000")
+	t.Setenv("GOTENBERG_ENDPOINTS", "http://gb1:3000, http://gb2:3000 ,,http://gb3:3000")
+	t.Setenv("RENDER_TIMEOUT_SECONDS", "45")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"http://gb1:3000", "http://gb2:3000", "http://gb3:3000"}
+	if len(cfg.GotenbergEndpoints) != 3 || cfg.GotenbergEndpoints[0] != want[0] ||
+		cfg.GotenbergEndpoints[2] != want[2] {
+		t.Fatalf("endpoints: %v", cfg.GotenbergEndpoints)
+	}
+	if cfg.RenderTimeout != 45*time.Second {
+		t.Fatalf("timeout: %v", cfg.RenderTimeout)
+	}
+}
+
+func TestGotenbergFallbackToSingleURL(t *testing.T) {
+	t.Setenv("GOTENBERG_URL", "http://gb:3000")
+	t.Setenv("GOTENBERG_ENDPOINTS", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.GotenbergEndpoints) != 1 || cfg.GotenbergEndpoints[0] != "http://gb:3000" {
+		t.Fatalf("fallback: %v", cfg.GotenbergEndpoints)
+	}
+	if cfg.RenderTimeout != 30*time.Second {
+		t.Fatalf("default timeout: %v", cfg.RenderTimeout)
+	}
+}
+
 func TestLoadBadInt(t *testing.T) {
 	t.Setenv("S3_URL_TTL_MINUTES", "notanint")
 	if _, err := Load(); err == nil {
