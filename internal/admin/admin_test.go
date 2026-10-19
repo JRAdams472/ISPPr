@@ -43,7 +43,7 @@ func testServer(t *testing.T) (*echo.Echo, *store.Queries, *pgxpool.Pool) {
 	}
 	t.Cleanup(pool.Close)
 	return server.New(config.Config{CORSOrigin: "http://localhost:3100"},
-		store.New(pool), pool), store.New(pool), pool
+		store.New(pool), pool, nil), store.New(pool), pool
 }
 
 func do(t *testing.T, e *echo.Echo, method, path, body, token string) (int, map[string]any) {

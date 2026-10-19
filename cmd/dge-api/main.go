@@ -10,7 +10,10 @@ import (
 	"time"
 
 	"github.com/jradams472/isppr/internal/config"
+	"github.com/jradams472/isppr/internal/jobs"
+	"github.com/jradams472/isppr/internal/render"
 	"github.com/jradams472/isppr/internal/server"
+	"github.com/jradams472/isppr/internal/storage"
 	"github.com/jradams472/isppr/internal/store"
 )
 
@@ -40,7 +43,19 @@ func main() {
 		log.Print("seed: demo tenant applied")
 	}
 
-	e := server.New(cfg, store.New(pool), pool)
+	rpool, err := render.NewPool(cfg.GotenbergEndpoints,
+		render.WithTimeout(cfg.RenderTimeout))
+	if err != nil {
+		log.Fatalf("render pool: %v", err)
+	}
+	orch := jobs.New(store.New(pool), rpool,
+		&storage.LocalStore{Dir: cfg.StorageDir},
+		jobs.WithMaxDocs(cfg.MaxDocsPerPkg),
+		jobs.WithSyncBudget(cfg.SyncBudget),
+		jobs.WithWorkers(cfg.WorkerCount))
+	go orch.Start(context.Background())
+
+	e := server.New(cfg, store.New(pool), pool, orch)
 
 	go func() {
 		if err := e.Start(":" + cfg.Port); err != nil && !errors.Is(err, http.ErrServerClosed) {

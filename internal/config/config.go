@@ -27,6 +27,9 @@ type Config struct {
 	S3PresignTTL  time.Duration
 	MaxDocsPerPkg int
 	RunSeed       bool
+	StorageDir    string
+	WorkerCount   int
+	SyncBudget    time.Duration
 }
 
 func Load() (Config, error) {
@@ -39,6 +42,14 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	renderSecs, err := envInt("RENDER_TIMEOUT_SECONDS", 30)
+	if err != nil {
+		return Config{}, err
+	}
+	workerCount, err := envInt("WORKER_COUNT", 4)
+	if err != nil {
+		return Config{}, err
+	}
+	budgetMs, err := envInt("SYNC_BUDGET_MS", 8000)
 	if err != nil {
 		return Config{}, err
 	}
@@ -66,6 +77,9 @@ func Load() (Config, error) {
 		S3PresignTTL:       ttl,
 		MaxDocsPerPkg:      maxDocs,
 		RunSeed:            env("RUN_SEED", "0") == "1",
+		StorageDir:         env("STORAGE_LOCAL_DIR", "data/docs"),
+		WorkerCount:        workerCount,
+		SyncBudget:         time.Duration(budgetMs) * time.Millisecond,
 	}, nil
 }
 
