@@ -20,16 +20,25 @@ type Config struct {
 	RenderTimeout      time.Duration
 	CORSOrigin         string
 
-	S3Endpoint    string
-	S3Bucket      string
-	S3AccessKey   string
-	S3SecretKey   string
-	S3PresignTTL  time.Duration
-	MaxDocsPerPkg int
-	RunSeed       bool
-	StorageDir    string
-	WorkerCount   int
-	SyncBudget    time.Duration
+	// StorageBackend selects the artifact store: "local" (StorageDir) or
+	// "s3" (S3Endpoint/S3PublicEndpoint). S3PublicEndpoint is where
+	// presigned download URLs are minted — it must resolve for callers.
+	StorageBackend   string
+	S3Endpoint       string
+	S3PublicEndpoint string
+	S3Bucket         string
+	S3AccessKey      string
+	S3SecretKey      string
+	S3Region         string
+	S3PresignTTL     time.Duration
+	MaxDocsPerPkg    int
+	RunSeed          bool
+	StorageDir       string
+	WorkerCount      int
+	SyncBudget       time.Duration
+	// SingleDocSkipZip uploads the raw .pdf (output_type PDF) for
+	// single-document packages instead of wrapping it in a ZIP.
+	SingleDocSkipZip bool
 }
 
 func Load() (Config, error) {
@@ -70,16 +79,20 @@ func Load() (Config, error) {
 		GotenbergEndpoints: endpoints,
 		RenderTimeout:      time.Duration(renderSecs) * time.Second,
 		CORSOrigin:         env("CORS_ORIGIN", "http://localhost:3000"),
+		StorageBackend:     env("STORAGE_BACKEND", "local"),
 		S3Endpoint:         env("S3_ENDPOINT", "http://localhost:9100"),
+		S3PublicEndpoint:   env("S3_PUBLIC_ENDPOINT", ""),
 		S3Bucket:           env("S3_BUCKET", "isppr-docs"),
 		S3AccessKey:        env("S3_ACCESS_KEY", "minioadmin"),
 		S3SecretKey:        env("S3_SECRET_KEY", "minioadmin"),
+		S3Region:           env("S3_REGION", "us-east-1"),
 		S3PresignTTL:       ttl,
 		MaxDocsPerPkg:      maxDocs,
 		RunSeed:            env("RUN_SEED", "0") == "1",
 		StorageDir:         env("STORAGE_LOCAL_DIR", "data/docs"),
 		WorkerCount:        workerCount,
 		SyncBudget:         time.Duration(budgetMs) * time.Millisecond,
+		SingleDocSkipZip:   env("SINGLE_DOC_SKIP_ZIP", "0") == "1",
 	}, nil
 }
 

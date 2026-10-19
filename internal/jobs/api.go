@@ -1,12 +1,14 @@
 package jobs
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jradams472/isppr/internal/storage"
 	"github.com/jradams472/isppr/internal/store"
 	"github.com/jradams472/isppr/internal/tenancy"
 	"github.com/labstack/echo/v4"
@@ -51,13 +53,13 @@ func (o *Orchestrator) generate(c echo.Context) error {
 		// Sync fast-path: when the package lands inside the budget the
 		// client gets the spec's full 201 metadata; otherwise 202.
 		if !o.Await(c.Request().Context(), row.ID) {
-			return c.JSON(http.StatusAccepted, accepted(row))
+			return c.JSON(http.StatusAccepted, o.accepted(row))
 		}
 		if fresh, err := o.q.GetRequest(c.Request().Context(), row.ID); err == nil {
 			row = fresh
 		}
 	}
-	return respond(c, row)
+	return o.respond(c, row)
 }
 
 func (o *Orchestrator) status(c echo.Context) error {
@@ -66,7 +68,7 @@ func (o *Orchestrator) status(c echo.Context) error {
 		return err
 	}
 	// Status polls always answer 200 with the lifecycle state in the body.
-	return c.JSON(http.StatusOK, responseFromRequest(row))
+	return c.JSON(http.StatusOK, o.responseFromRequest(c.Request().Context(), row))
 }
 
 func (o *Orchestrator) download(c echo.Context) error {
@@ -77,15 +79,27 @@ func (o *Orchestrator) download(c echo.Context) error {
 	if row.Status != StatusCompleted || !row.OutputKey.Valid {
 		return echo.NewHTTPError(http.StatusConflict, "package not ready")
 	}
-	rc, err := o.store.Open(c.Request().Context(), row.OutputKey.String)
+	key := row.OutputKey.String
+	// S3-backed stores redirect to a fresh presigned URL; local streams.
+	if p, ok := o.store.(storage.Presigner); ok {
+		url, err := p.Presign(c.Request().Context(), key)
+		if err != nil {
+			return err
+		}
+		return c.Redirect(http.StatusFound, url)
+	}
+	rc, err := o.store.Open(c.Request().Context(), key)
 	if err != nil {
 		return err
 	}
 	defer rc.Close()
-	c.Response().Header().Set(echo.HeaderContentType, "application/zip")
 	c.Response().Header().Set("Content-Disposition",
-		`attachment; filename="`+filenameFor(row.PackageName, row.ID)+`"`)
-	return c.Stream(http.StatusOK, "application/zip", rc)
+		`attachment; filename="`+artifactBase(key)+`"`)
+	ct := "application/zip"
+	if outputTypeFor(key) == OutputPDF {
+		ct = "application/pdf"
+	}
+	return c.Stream(http.StatusOK, ct, rc)
 }
 
 // requestForTenant scopes the lookup to the resolved client — a foreign
@@ -146,8 +160,8 @@ func mapSubmitError(err error) error {
 
 // respond maps the stored row to a spec-shaped reply: 201 for completed
 // packages, 202 for in-flight, 200-with-FAILED for terminal failures.
-func respond(c echo.Context, row store.GenerationRequest) error {
-	resp := responseFromRequest(row)
+func (o *Orchestrator) respond(c echo.Context, row store.GenerationRequest) error {
+	resp := o.responseFromRequest(c.Request().Context(), row)
 	switch row.Status {
 	case StatusCompleted:
 		return c.JSON(http.StatusCreated, resp)
@@ -158,25 +172,35 @@ func respond(c echo.Context, row store.GenerationRequest) error {
 	}
 }
 
-func accepted(row store.GenerationRequest) response {
-	return responseFromRequest(row)
+func (o *Orchestrator) accepted(row store.GenerationRequest) response {
+	return o.responseFromRequest(context.Background(), row)
 }
 
-func responseFromRequest(row store.GenerationRequest) response {
+// responseFromRequest maps the stored row; completed rows mint a fresh
+// presigned download_url under S3 (never persisted — every read signs
+// anew within the TTL), or the tenant download route under local.
+func (o *Orchestrator) responseFromRequest(ctx context.Context, row store.GenerationRequest) response {
 	resp := response{
 		RequestID: row.ID,
 		Status:    row.Status,
 		CreatedAt: row.CreatedAt.Time.UTC().Format(time.RFC3339),
 	}
-	if row.Status == StatusCompleted {
+	if row.Status == StatusCompleted && row.OutputKey.Valid {
 		var m Metrics
 		if err := json.Unmarshal(row.Metrics, &m); err == nil {
 			resp.Metrics = &m
 		}
+		key := row.OutputKey.String
+		dl := "/api/v1/packages/" + row.ID + "/download"
+		if p, ok := o.store.(storage.Presigner); ok {
+			if url, err := p.Presign(ctx, key); err == nil {
+				dl = url
+			}
+		}
 		resp.Results = &Results{
-			OutputType:  "ZIP",
-			Filename:    filenameFor(row.PackageName, row.ID),
-			DownloadURL: "/api/v1/packages/" + row.ID + "/download",
+			OutputType:  outputTypeFor(key),
+			Filename:    artifactBase(key),
+			DownloadURL: dl,
 		}
 	}
 	if row.Status == StatusFailed && row.Error.Valid {

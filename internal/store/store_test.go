@@ -2,14 +2,13 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -34,12 +33,13 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-var testSeq atomic.Int64
-
 func testID(prefix string) string {
-	// Windows clock granularity is ~15ms — sequence guards rapid calls.
-	return fmt.Sprintf("%s_t%d_%d", prefix,
-		time.Now().UnixNano()%1_000_000_000, testSeq.Add(1))
+	// Random, not sequential — `go test` runs package binaries in
+	// parallel against the shared database, so a per-process sequence
+	// can't prevent cross-process ID collisions.
+	var b [4]byte
+	_, _ = rand.Read(b[:])
+	return fmt.Sprintf("%s_t%x", prefix, b)
 }
 
 func sha256hex(s string) string {

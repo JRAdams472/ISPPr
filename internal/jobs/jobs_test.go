@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -27,11 +28,13 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-var seq int64
-
+// jid mints unique fixture IDs — random, since `go test` runs package
+// binaries in parallel against the shared database and a per-process
+// sequence counter can't prevent cross-process collisions.
 func jid(prefix string) string {
-	seq++
-	return fmt.Sprintf("%s_j%d_%d", prefix, time.Now().UnixNano()%1e6, seq)
+	var b [4]byte
+	_, _ = rand.Read(b[:])
+	return fmt.Sprintf("%s_j%x", prefix, b)
 }
 
 func sha256hex(s string) string {
@@ -95,7 +98,7 @@ func newEnvBudget(t *testing.T, delay, budget time.Duration) *env {
 			time.Sleep(delay)
 		}
 		w.Write([]byte("%PDF-fake"))
-	}, budget)
+	}, budget, nil)
 }
 
 // newEnvFlaky mounts a custom gotenberg handler (failures, delays).
@@ -103,10 +106,11 @@ func newEnvFlaky(t *testing.T, h func(w http.ResponseWriter)) *env {
 	t.Helper()
 	return newEnvHandler(t, func(w http.ResponseWriter, r *http.Request) {
 		h(w)
-	}, 3*time.Second)
+	}, 3*time.Second, nil)
 }
 
-func newEnvHandler(t *testing.T, h http.HandlerFunc, budget time.Duration) *env {
+func newEnvHandler(t *testing.T, h http.HandlerFunc, budget time.Duration,
+	backend storage.Backend, opts ...jobs.Option) *env {
 	t.Helper()
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
@@ -126,8 +130,11 @@ func newEnvHandler(t *testing.T, h http.HandlerFunc, budget time.Duration) *env 
 
 	rpool, _ := render.NewPool([]string{gb.URL}, render.WithTimeout(5*time.Second))
 	dir := t.TempDir()
-	orch := jobs.New(store.New(pool), rpool, &storage.LocalStore{Dir: dir},
-		jobs.WithWorkers(1), jobs.WithSyncBudget(budget))
+	if backend == nil {
+		backend = &storage.LocalStore{Dir: dir}
+	}
+	base := []jobs.Option{jobs.WithWorkers(1), jobs.WithSyncBudget(budget)}
+	orch := jobs.New(store.New(pool), rpool, backend, append(base, opts...)...)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	go orch.Start(ctx)
@@ -362,5 +369,84 @@ func TestDownload(t *testing.T) {
 	rc.Close()
 	if string(b) != "%PDF-fake" {
 		t.Fatalf("pdf content: %q", b)
+	}
+}
+
+// presignStore wraps LocalStore with the S3 Presigner capability — the
+// download route redirects and response bodies embed the minted URL.
+type presignStore struct{ *storage.LocalStore }
+
+func (presignStore) Presign(context.Context, string) (string, error) {
+	return "https://s3.example/isppr-docs/presigned-ok", nil
+}
+
+func TestDownloadPresignRedirect(t *testing.T) {
+	env := newEnvHandler(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("%PDF-fake"))
+	}, 3*time.Second, presignStore{&storage.LocalStore{Dir: t.TempDir()}})
+	f := seed(t, env.q)
+	code, body, _ := doReq(t, env.e, http.MethodPost, "/api/v1/packages/generate", genBody(f), f.key, "")
+	if code != 201 {
+		t.Fatalf("%d %v", code, body)
+	}
+	results := body["results"].(map[string]any)
+	if results["download_url"] != "https://s3.example/isppr-docs/presigned-ok" {
+		t.Fatalf("download_url should be the presigned URL: %v", results)
+	}
+	rid := body["request_id"].(string)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/packages/"+rid+"/download", nil)
+	req.Header.Set("X-API-Key", f.key)
+	rec := httptest.NewRecorder()
+	env.e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("want 302 redirect to presigned URL, got %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "https://s3.example/isppr-docs/presigned-ok" {
+		t.Fatalf("redirect location: %q", loc)
+	}
+	// Status polls re-mint the presigned URL too.
+	_, poll, _ := doReq(t, env.e, http.MethodGet, "/api/v1/packages/"+rid, "", f.key, "")
+	if poll["results"].(map[string]any)["download_url"] != "https://s3.example/isppr-docs/presigned-ok" {
+		t.Fatalf("status download_url: %v", poll)
+	}
+}
+
+// SINGLE_DOC_SKIP_ZIP: a one-document package stores the raw PDF and
+// reports output_type PDF — no zip wrapper.
+func TestSingleDocSkipZip(t *testing.T) {
+	env := newEnvHandler(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("%PDF-fake"))
+	}, 3*time.Second, nil, jobs.WithSingleDocSkipZip(true))
+	f := seed(t, env.q)
+	code, body, _ := doReq(t, env.e, http.MethodPost, "/api/v1/packages/generate", genBody(f), f.key, "")
+	if code != 201 {
+		t.Fatalf("%d %v", code, body)
+	}
+	results := body["results"].(map[string]any)
+	if results["output_type"] != "PDF" {
+		t.Fatalf("want output_type PDF, got %v", results)
+	}
+	if !strings.HasSuffix(results["filename"].(string), ".pdf") {
+		t.Fatalf("filename should be .pdf: %v", results)
+	}
+	rid := body["request_id"].(string)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/packages/"+rid+"/download", nil)
+	req.Header.Set("X-API-Key", f.key)
+	rec := httptest.NewRecorder()
+	env.e.ServeHTTP(rec, req)
+	if rec.Code != 200 || rec.Header().Get(echo.HeaderContentType) != "application/pdf" {
+		t.Fatalf("download: %d %q", rec.Code, rec.Header().Get(echo.HeaderContentType))
+	}
+	if string(rec.Body.Bytes()) != "%PDF-fake" {
+		t.Fatalf("raw pdf content: %q", rec.Body.Bytes())
+	}
+}
+
+func TestArtifactNaming(t *testing.T) {
+	if got := jobs.ArtifactName("My Pack!", "req_1", false); got != "My_Pack_req_1.zip" {
+		t.Fatalf("zip name: %q", got)
+	}
+	if got := jobs.ArtifactName("My Pack!", "req_1", true); got != "My_Pack_req_1.pdf" {
+		t.Fatalf("pdf name: %q", got)
 	}
 }
