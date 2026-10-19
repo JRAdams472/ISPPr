@@ -78,6 +78,8 @@ type GenerationRequest struct {
 	OutputKey      pgtype.Text        `json:"output_key"`
 	Error          pgtype.Text        `json:"error"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	WebhookStatus  string             `json:"webhook_status"`
+	WebhookLog     []byte             `json:"webhook_log"`
 }
 
 type TemplateMaster struct {

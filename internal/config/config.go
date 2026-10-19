@@ -39,6 +39,10 @@ type Config struct {
 	// SingleDocSkipZip uploads the raw .pdf (output_type PDF) for
 	// single-document packages instead of wrapping it in a ZIP.
 	SingleDocSkipZip bool
+	// WebhookSecret signs X-ISPPr-Signature headers; WebhookMaxAttempts
+	// bounds the retry policy (exponential backoff).
+	WebhookSecret      string
+	WebhookMaxAttempts int
 }
 
 func Load() (Config, error) {
@@ -59,6 +63,10 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	budgetMs, err := envInt("SYNC_BUDGET_MS", 8000)
+	if err != nil {
+		return Config{}, err
+	}
+	webhookMax, err := envInt("WEBHOOK_MAX_ATTEMPTS", 5)
 	if err != nil {
 		return Config{}, err
 	}
@@ -93,6 +101,8 @@ func Load() (Config, error) {
 		WorkerCount:        workerCount,
 		SyncBudget:         time.Duration(budgetMs) * time.Millisecond,
 		SingleDocSkipZip:   env("SINGLE_DOC_SKIP_ZIP", "0") == "1",
+		WebhookSecret:      env("WEBHOOK_SECRET", "isppr_dev_webhook"),
+		WebhookMaxAttempts: webhookMax,
 	}, nil
 }
 

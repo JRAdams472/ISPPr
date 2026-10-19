@@ -18,7 +18,8 @@ GET  /api/v1/packages/{request_id}/download
   "package_name": "Q1_Invoices",         // required, <= 120 chars
   "client_id": "cli_demo",               // optional; if present MUST equal the
                                          // authenticated tenant (403 otherwise)
-  "webhook_url": "https://…",            // optional, stored (delivery in MPE-37)
+  "webhook_url": "https://…",            // ignored — callbacks go to the
+                                         // customer's webhook_url (admin API)
   "documents": [                         // required, non-empty, <= 50
     { "template_id": "invoice",          // template NAME (resolution is name-keyed)
       "payload": { "title": "…" } }
@@ -84,3 +85,27 @@ route path under local.
 `output_type` is `ZIP` (`{name}_{request_id}.zip`, documents inside as
 `NN_{template}.pdf`), or `PDF` (`{name}_{request_id}.pdf`) for
 single-document packages when `SINGLE_DOC_SKIP_ZIP=1`.
+
+## Webhooks (MPE-37)
+
+When the customer has `webhook_url` set (admin API), a terminal request
+(COMPLETED or FAILED) triggers a signed callback:
+
+```http
+POST {customers.webhook_url}
+Content-Type: application/json
+X-ISPPr-Signature: sha256=<hex>   # HMAC-SHA256(WEBHOOK_SECRET, raw body)
+```
+
+Body is the same egress shape as the status endpoint (`request_id`,
+`status`, `metrics`, `results.download_url` — presigned URL re-minted per
+attempt, `error` on failure). Receivers verify:
+
+```
+hmac_sha256(webhook_secret, raw_body) == signature[7:]
+```
+
+Retries: `WEBHOOK_MAX_ATTEMPTS` (default 5), exponential backoff
+(1s→16s), 5s per-attempt timeout, any 2xx = delivered. The request row
+records `webhook_status` (NONE/PENDING/DELIVERED/EXHAUSTED) and a
+`webhook_log` of every attempt — visible via `GET /admin/requests/{id}`.

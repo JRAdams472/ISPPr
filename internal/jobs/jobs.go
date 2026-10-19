@@ -62,13 +62,15 @@ const (
 // Orchestrator owns the generation pipeline: enqueue, worker pool, sync
 // fast-path wait.
 type Orchestrator struct {
-	q             *store.Queries
-	pool          *render.Pool
-	store         storage.Backend
-	maxDocs       int
-	budget        time.Duration
-	workers       int
-	skipZipSingle bool
+	q               *store.Queries
+	pool            *render.Pool
+	store           storage.Backend
+	maxDocs         int
+	budget          time.Duration
+	workers         int
+	skipZipSingle   bool
+	webhookSecret   string
+	webhookAttempts int
 
 	wake chan struct{}
 	done sync.Map // requestID → chan struct{}
@@ -98,13 +100,17 @@ func WithMaxDocs(n int) Option              { return func(o *Orchestrator) { o.m
 func WithSyncBudget(d time.Duration) Option { return func(o *Orchestrator) { o.budget = d } }
 func WithWorkers(n int) Option              { return func(o *Orchestrator) { o.workers = n } }
 func WithSingleDocSkipZip(on bool) Option   { return func(o *Orchestrator) { o.skipZipSingle = on } }
+func WithWebhook(secret string, max int) Option {
+	return func(o *Orchestrator) { o.webhookSecret, o.webhookAttempts = secret, max }
+}
 
 // New builds an orchestrator over the shared dependencies.
 func New(q *store.Queries, pool *render.Pool, st storage.Backend, opts ...Option) *Orchestrator {
 	o := &Orchestrator{
 		q: q, pool: pool, store: st,
 		maxDocs: 25, budget: 8 * time.Second, workers: 4,
-		wake: make(chan struct{}, 1),
+		webhookAttempts: 5,
+		wake:            make(chan struct{}, 1),
 	}
 	for _, opt := range opts {
 		opt(o)
@@ -245,6 +251,7 @@ func (o *Orchestrator) execute(ctx context.Context, job store.GenerationJob) {
 			ID: job.ID, Status: StatusFailed, Error: pgText(err.Error()),
 		})
 		o.signal(job.RequestID)
+		go o.deliver(ctx, job.RequestID) // terminal failure still notifies
 	}
 	defer func() {
 		if r := recover(); r != nil {
@@ -338,6 +345,7 @@ func (o *Orchestrator) execute(ctx context.Context, job store.GenerationJob) {
 	}
 	_ = o.q.FinishJob(ctx, store.FinishJobParams{ID: job.ID, Status: "DONE"})
 	o.signal(req.ID)
+	go o.deliver(ctx, req.ID) // signed callback when the customer has a webhook_url
 }
 
 func (o *Orchestrator) setStatus(ctx context.Context, id, status string) error {

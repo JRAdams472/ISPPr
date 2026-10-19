@@ -47,3 +47,14 @@ UPDATE generation_jobs SET status = 'QUEUED', error = $2 WHERE id = $1;
 
 -- name: GetJobForRequest :one
 SELECT * FROM generation_jobs WHERE request_id = $1;
+
+-- name: SetWebhookStatus :exec
+UPDATE generation_requests SET webhook_status = $2 WHERE id = $1;
+
+-- name: AppendWebhookLog :exec
+UPDATE generation_requests
+SET webhook_log = webhook_log || sqlc.arg(entry)::jsonb
+WHERE id = sqlc.arg(id);
+
+-- name: GetCustomerWebhook :one
+SELECT webhook_url FROM customers WHERE id = $1 AND client_id = $2;

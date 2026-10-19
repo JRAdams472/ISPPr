@@ -11,6 +11,22 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const appendWebhookLog = `-- name: AppendWebhookLog :exec
+UPDATE generation_requests
+SET webhook_log = webhook_log || $1::jsonb
+WHERE id = $2
+`
+
+type AppendWebhookLogParams struct {
+	Entry []byte `json:"entry"`
+	ID    string `json:"id"`
+}
+
+func (q *Queries) AppendWebhookLog(ctx context.Context, arg AppendWebhookLogParams) error {
+	_, err := q.db.Exec(ctx, appendWebhookLog, arg.Entry, arg.ID)
+	return err
+}
+
 const claimJob = `-- name: ClaimJob :one
 UPDATE generation_jobs
 SET status = 'CLAIMED', claimed_at = now(),
@@ -64,7 +80,7 @@ func (q *Queries) CompleteRequest(ctx context.Context, arg CompleteRequestParams
 const createGenerationRequest = `-- name: CreateGenerationRequest :one
 INSERT INTO generation_requests (id, client_id, customer_id, idempotency_key, package_name, status)
 VALUES ($1, $2, $3, $4, $5, 'QUEUED')
-RETURNING id, client_id, customer_id, idempotency_key, package_name, status, metrics, output_key, error, created_at
+RETURNING id, client_id, customer_id, idempotency_key, package_name, status, metrics, output_key, error, created_at, webhook_status, webhook_log
 `
 
 type CreateGenerationRequestParams struct {
@@ -95,6 +111,8 @@ func (q *Queries) CreateGenerationRequest(ctx context.Context, arg CreateGenerat
 		&i.OutputKey,
 		&i.Error,
 		&i.CreatedAt,
+		&i.WebhookStatus,
+		&i.WebhookLog,
 	)
 	return i, err
 }
@@ -151,6 +169,22 @@ func (q *Queries) FinishJob(ctx context.Context, arg FinishJobParams) error {
 	return err
 }
 
+const getCustomerWebhook = `-- name: GetCustomerWebhook :one
+SELECT webhook_url FROM customers WHERE id = $1 AND client_id = $2
+`
+
+type GetCustomerWebhookParams struct {
+	ID       string `json:"id"`
+	ClientID string `json:"client_id"`
+}
+
+func (q *Queries) GetCustomerWebhook(ctx context.Context, arg GetCustomerWebhookParams) (pgtype.Text, error) {
+	row := q.db.QueryRow(ctx, getCustomerWebhook, arg.ID, arg.ClientID)
+	var webhook_url pgtype.Text
+	err := row.Scan(&webhook_url)
+	return webhook_url, err
+}
+
 const getJobForRequest = `-- name: GetJobForRequest :one
 SELECT id, request_id, client_id, payload, status, attempts, claimed_at, lease_until, error, created_at, finished_at FROM generation_jobs WHERE request_id = $1
 `
@@ -175,7 +209,7 @@ func (q *Queries) GetJobForRequest(ctx context.Context, requestID string) (Gener
 }
 
 const getRequest = `-- name: GetRequest :one
-SELECT id, client_id, customer_id, idempotency_key, package_name, status, metrics, output_key, error, created_at FROM generation_requests WHERE id = $1
+SELECT id, client_id, customer_id, idempotency_key, package_name, status, metrics, output_key, error, created_at, webhook_status, webhook_log FROM generation_requests WHERE id = $1
 `
 
 func (q *Queries) GetRequest(ctx context.Context, id string) (GenerationRequest, error) {
@@ -192,12 +226,14 @@ func (q *Queries) GetRequest(ctx context.Context, id string) (GenerationRequest,
 		&i.OutputKey,
 		&i.Error,
 		&i.CreatedAt,
+		&i.WebhookStatus,
+		&i.WebhookLog,
 	)
 	return i, err
 }
 
 const getRequestByIdempotency = `-- name: GetRequestByIdempotency :one
-SELECT id, client_id, customer_id, idempotency_key, package_name, status, metrics, output_key, error, created_at FROM generation_requests
+SELECT id, client_id, customer_id, idempotency_key, package_name, status, metrics, output_key, error, created_at, webhook_status, webhook_log FROM generation_requests
 WHERE client_id = $1 AND idempotency_key = $2
 `
 
@@ -220,12 +256,14 @@ func (q *Queries) GetRequestByIdempotency(ctx context.Context, arg GetRequestByI
 		&i.OutputKey,
 		&i.Error,
 		&i.CreatedAt,
+		&i.WebhookStatus,
+		&i.WebhookLog,
 	)
 	return i, err
 }
 
 const getRequestForClient = `-- name: GetRequestForClient :one
-SELECT id, client_id, customer_id, idempotency_key, package_name, status, metrics, output_key, error, created_at FROM generation_requests WHERE id = $1 AND client_id = $2
+SELECT id, client_id, customer_id, idempotency_key, package_name, status, metrics, output_key, error, created_at, webhook_status, webhook_log FROM generation_requests WHERE id = $1 AND client_id = $2
 `
 
 type GetRequestForClientParams struct {
@@ -247,6 +285,8 @@ func (q *Queries) GetRequestForClient(ctx context.Context, arg GetRequestForClie
 		&i.OutputKey,
 		&i.Error,
 		&i.CreatedAt,
+		&i.WebhookStatus,
+		&i.WebhookLog,
 	)
 	return i, err
 }
@@ -277,5 +317,19 @@ type SetRequestStatusParams struct {
 
 func (q *Queries) SetRequestStatus(ctx context.Context, arg SetRequestStatusParams) error {
 	_, err := q.db.Exec(ctx, setRequestStatus, arg.ID, arg.Status, arg.Error)
+	return err
+}
+
+const setWebhookStatus = `-- name: SetWebhookStatus :exec
+UPDATE generation_requests SET webhook_status = $2 WHERE id = $1
+`
+
+type SetWebhookStatusParams struct {
+	ID            string `json:"id"`
+	WebhookStatus string `json:"webhook_status"`
+}
+
+func (q *Queries) SetWebhookStatus(ctx context.Context, arg SetWebhookStatusParams) error {
+	_, err := q.db.Exec(ctx, setWebhookStatus, arg.ID, arg.WebhookStatus)
 	return err
 }
