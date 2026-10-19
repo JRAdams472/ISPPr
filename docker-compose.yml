@@ -50,6 +50,8 @@ services:
       S3_ENDPOINT: http://minio:9000
       CORS_ORIGIN: http://localhost:3100
       RUN_SEED: "1" # dev demo tenant (cli_demo / cust_demo); unset in prod
+      STORAGE_LOCAL_DIR: /data/docs # dev artifact store; S3 backend lands in MPE-36
+    tmpfs: [/data/docs] # writable by the non-root app; artifacts are dev-ephemeral
     ports: ["8090:8090"]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8090/healthz || exit 1"]

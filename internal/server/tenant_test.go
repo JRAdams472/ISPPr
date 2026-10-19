@@ -50,7 +50,7 @@ func testEnv(t *testing.T) (*echo.Echo, *store.Queries) {
 	}
 	t.Cleanup(pool.Close)
 	return server.New(config.Config{CORSOrigin: "http://localhost:3100"},
-		store.New(pool), pool), store.New(pool)
+		store.New(pool), pool, nil), store.New(pool)
 }
 
 // tenantFixture builds two tenants each owning a customer, a template master,

@@ -36,7 +36,7 @@ const MODULE_PREFIX = "github.com/jradams472/isppr/";
 const WEB_PREFIX = "clients/web/";
 
 const SKIP_FILE = [/(_test\.go|\.test\.[jt]sx?|\.spec\.[jt]sx?)$/, /__tests__\//];
-const SKIP_AREA = [/^cmd\//, /^\.$/]; // composition roots, repo root (assets.go embed)
+const SKIP_AREA = [/^cmd\//, /^\.$/, /(^|\/)node_modules\//]; // composition roots, repo root (assets.go embed), vendored deps
 
 function isGenerated(path) {
   if (/\.sql\.go$/.test(path)) return true;

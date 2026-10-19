@@ -53,6 +53,20 @@ type Customer struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+type GenerationJob struct {
+	ID         string             `json:"id"`
+	RequestID  string             `json:"request_id"`
+	ClientID   string             `json:"client_id"`
+	Payload    []byte             `json:"payload"`
+	Status     string             `json:"status"`
+	Attempts   int32              `json:"attempts"`
+	ClaimedAt  pgtype.Timestamptz `json:"claimed_at"`
+	LeaseUntil pgtype.Timestamptz `json:"lease_until"`
+	Error      pgtype.Text        `json:"error"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	FinishedAt pgtype.Timestamptz `json:"finished_at"`
+}
+
 type GenerationRequest struct {
 	ID             string             `json:"id"`
 	ClientID       string             `json:"client_id"`

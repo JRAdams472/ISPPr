@@ -6,6 +6,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jradams472/isppr/internal/admin"
 	"github.com/jradams472/isppr/internal/config"
+	"github.com/jradams472/isppr/internal/jobs"
 	"github.com/jradams472/isppr/internal/store"
 	"github.com/jradams472/isppr/internal/tenancy"
 	"github.com/labstack/echo/v4"
@@ -14,7 +15,7 @@ import (
 
 // New builds the Echo engine with global middleware and the scaffold routes.
 // q/pool may be nil for tests that don't touch the admin surface.
-func New(cfg config.Config, q *store.Queries, pool *pgxpool.Pool) *echo.Echo {
+func New(cfg config.Config, q *store.Queries, pool *pgxpool.Pool, orch *jobs.Orchestrator) *echo.Echo {
 	e := echo.New()
 	e.HideBanner = true
 	e.HidePort = true
@@ -39,6 +40,9 @@ func New(cfg config.Config, q *store.Queries, pool *pgxpool.Pool) *echo.Echo {
 		admin.New(q, pool).Mount(v1)
 		tenant := v1.Group("/packages", tenancy.Middleware(q, "generate"))
 		tenant.GET("/ping", tenantPing)
+		if orch != nil {
+			orch.Mount(tenant)
+		}
 	}
 
 	return e
