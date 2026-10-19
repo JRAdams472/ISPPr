@@ -19,6 +19,13 @@ GET  /api/v1/admin/me             → {"id","email","name","role"}
 Present the token as `Authorization: Bearer <token>` or the `isppr_admin`
 cookie. Sessions live in `admin_sessions` (sha-256 hash only), 12h TTL.
 
+**Roles.** Every authenticated session can read. Mutating routes
+(POST/PUT/PATCH/DELETE) additionally require `role: admin`; other roles get
+`403 admin role required`. `/login` and `/logout` are open to all sessions —
+signing out is not a destructive action. The dev seed ships
+`admin@isppr.local` (admin) and `viewer@isppr.local` (viewer), both
+`isppr-admin`.
+
 **Secret material is never re-readable.** API-key plaintext is returned
 exactly once at create/rotate; password/key hashes never appear in responses.
 

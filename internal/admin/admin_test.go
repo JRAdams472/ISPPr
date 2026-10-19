@@ -6,12 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jradams472/isppr/internal/config"
@@ -87,7 +87,7 @@ func TestAdminAPI(t *testing.T) {
 
 	// Seed an admin user to log in with (unique email per run — the dev DB
 	// persists between test runs).
-	sfx := fmt.Sprintf("%d", time.Now().UnixNano()%1_000_000_000)
+	sfx := fmt.Sprintf("%d", rand.Int63())
 	email := "t" + sfx + "@isppr.local"
 	hash, _ := bcrypt.GenerateFromPassword([]byte("pw"), bcrypt.MinCost)
 	_, err := q.CreateAdminUser(ctx, store.CreateAdminUserParams{
@@ -274,5 +274,39 @@ func TestAdminAPI(t *testing.T) {
 	}
 	if code, _ := do(t, e, http.MethodGet, "/api/v1/admin/me", "", tok); code != http.StatusUnauthorized {
 		t.Fatalf("post-logout: got %d, want 401", code)
+	}
+}
+
+func TestAdminRoleGate(t *testing.T) {
+	e, q, _ := testServer(t)
+	ctx := context.Background()
+
+	// A viewer can log in and read, but writes are 403 — roles gate
+	// destructive actions server-side, not just in the portal.
+	sfx := fmt.Sprintf("%d", rand.Int63())
+	email := "v" + sfx + "@isppr.local"
+	hash, _ := bcrypt.GenerateFromPassword([]byte("pw"), bcrypt.MinCost)
+	_, err := q.CreateAdminUser(ctx, store.CreateAdminUserParams{
+		ID: "adm_v" + sfx, Email: email, Name: "V", PasswordHash: string(hash), Role: "viewer",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, login := do(t, e, http.MethodPost, "/api/v1/admin/login",
+		fmt.Sprintf(`{"email":%q,"password":"pw"}`, email), "")
+	if code != http.StatusOK {
+		t.Fatalf("viewer login: %d", code)
+	}
+	tok := login["token"].(string)
+
+	if code, _ := do(t, e, http.MethodGet, "/api/v1/admin/clients", "", tok); code != http.StatusOK {
+		t.Fatalf("viewer read: got %d, want 200", code)
+	}
+	if code, _ := do(t, e, http.MethodPost, "/api/v1/admin/clients",
+		`{"name":"x"}`, tok); code != http.StatusForbidden {
+		t.Fatalf("viewer write: got %d, want 403", code)
+	}
+	if code, _ := do(t, e, http.MethodPost, "/api/v1/admin/logout", "", tok); code != http.StatusNoContent {
+		t.Fatalf("viewer logout: got %d, want 204", code)
 	}
 }
