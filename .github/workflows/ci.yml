@@ -71,6 +71,23 @@ jobs:
           node-version: 24
       - name: coverage floor (80%/area)
         run: node tools/covercheck.mjs coverage.out
+      - name: e2e — pipeline suite (live stack)
+        # Gotenberg + a seeded `go run` api over the postgres/minio already
+        # up — real HTTP against the same binaries the unit suite exercised.
+        run: |
+          docker run -d --name gotenberg -p 3000:3000 gotenberg/gotenberg:8
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:3000/health && break || sleep 2
+          done
+          GOTENBERG_URL=http://localhost:3000 \
+            STORAGE_BACKEND=s3 S3_PUBLIC_ENDPOINT=http://localhost:9100 \
+            RUN_SEED=1 PORT=8090 \
+            nohup go run ./cmd/dge-api > api.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:8090/healthz && break || sleep 2
+          done
+          curl -sf http://localhost:8090/healthz || { cat api.log; exit 1; }
+          go test -count=1 -timeout 5m -v ./e2e/...
       - name: Upload Go coverage report
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
