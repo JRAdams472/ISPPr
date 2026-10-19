@@ -1,0 +1,5 @@
+{
+  "userInput": "<script>alert('xss')</script>",
+  "trustedHtml": "<em>safe</em>",
+  "blocks": {"promo": false}
+}

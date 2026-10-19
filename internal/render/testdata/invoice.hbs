@@ -1,0 +1,10 @@
+<h1><img src="{{branding.logo}}" alt="logo"> {{branding.company}}</h1>
+{{#if blocks.header}}<header>INVOICE {{number}}</header>{{/if}}
+<table>
+{{#each lineItems}}<tr><td>{{@index}}</td><td>{{title desc}}</td><td>{{currency price "USD"}}</td></tr>
+{{/each}}</table>
+<p>Total: {{currency total "USD"}}</p>
+<p>Due: {{date due "2006-01-02"}}</p>
+{{#if (gt total 1000)}}<p class="flag">High value</p>{{/if}}
+{{#if (and (eq status "open") (not overdue))}}<p>Payment pending</p>{{/if}}
+<p>Terms: {{join terms ", "}}</p>
