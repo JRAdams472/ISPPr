@@ -3,6 +3,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({
   usePathname: vi.fn(() => "/"),
+  useRouter: () => ({ replace: vi.fn() }),
+}));
+
+// The auth gate is covered by its own test — render it through here.
+vi.mock("@/components/require-auth", () => ({
+  RequireAuth: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
 import PortalLayout from "../app/(portal)/layout";
@@ -26,10 +32,22 @@ describe("portal pages", () => {
   });
 
   it("wraps pages in the shell with nav", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ id: "u1", name: "A", role: "admin" }),
+            { status: 200 },
+          ),
+      ),
+    );
     const { getByRole } = render(
-      <PortalLayout>
-        <Clients />
-      </PortalLayout>,
+      <Providers>
+        <PortalLayout>
+          <Clients />
+        </PortalLayout>
+      </Providers>,
     );
     expect(getByRole("navigation", { name: "Primary" })).toBeTruthy();
     expect(getByRole("heading", { name: "Clients" })).toBeTruthy();

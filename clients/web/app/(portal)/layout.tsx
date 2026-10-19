@@ -1,3 +1,4 @@
+import { RequireAuth } from "@/components/require-auth";
 import { Shell } from "@/components/shell";
 
 export default function PortalLayout({
@@ -5,5 +6,9 @@ export default function PortalLayout({
 }: {
   children: React.ReactNode;
 }) {
-  return <Shell>{children}</Shell>;
+  return (
+    <RequireAuth>
+      <Shell>{children}</Shell>
+    </RequireAuth>
+  );
 }

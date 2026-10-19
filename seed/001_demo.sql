@@ -35,6 +35,17 @@ VALUES (
 )
 ON CONFLICT (id) DO NOTHING;
 
+-- Read-only account for exercising the role gate; same dev password.
+INSERT INTO admin_users (id, email, name, password_hash, role)
+VALUES (
+    'adm_viewer',
+    'viewer@isppr.local',
+    'Demo Viewer',
+    '$2a$10$FGtHHFYFlHn.Fyy4nqt/W.GvADoT3kwdXsVEnTNiq6U6lXoQ8dfPW',
+    'viewer'
+)
+ON CONFLICT (id) DO NOTHING;
+
 -- A usable template so the demo tenant can POST /packages/generate out of
 -- the box. Name matches the spec's style (tmpl_*); payload fields: title,
 -- total, due, items[].

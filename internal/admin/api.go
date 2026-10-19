@@ -41,26 +41,26 @@ func (a *API) Mount(v1 *echo.Group) {
 	g.GET("/me", a.me)
 
 	g.GET("/clients", a.listClients)
-	g.POST("/clients", a.createClient)
+	g.POST("/clients", a.createClient, a.requireWrite)
 	g.GET("/clients/:id", a.getClient)
-	g.PATCH("/clients/:id", a.updateClient)
+	g.PATCH("/clients/:id", a.updateClient, a.requireWrite)
 
 	g.GET("/clients/:id/customers", a.listCustomers)
-	g.POST("/clients/:id/customers", a.createCustomer)
+	g.POST("/clients/:id/customers", a.createCustomer, a.requireWrite)
 	g.GET("/customers/:id", a.getCustomer)
-	g.PATCH("/customers/:id", a.updateCustomer)
+	g.PATCH("/customers/:id", a.updateCustomer, a.requireWrite)
 
 	g.GET("/clients/:id/api-keys", a.listAPIKeys)
-	g.POST("/clients/:id/api-keys", a.createAPIKey)
-	g.POST("/api-keys/:id/rotate", a.rotateAPIKey)
-	g.POST("/api-keys/:id/revoke", a.revokeAPIKey)
+	g.POST("/clients/:id/api-keys", a.createAPIKey, a.requireWrite)
+	g.POST("/api-keys/:id/rotate", a.rotateAPIKey, a.requireWrite)
+	g.POST("/api-keys/:id/revoke", a.revokeAPIKey, a.requireWrite)
 
 	g.GET("/clients/:id/template-masters", a.listMasters)
-	g.POST("/clients/:id/template-masters", a.createMaster)
-	g.POST("/clients/:id/template-masters/:name/versions", a.publishMasterVersion)
+	g.POST("/clients/:id/template-masters", a.createMaster, a.requireWrite)
+	g.POST("/clients/:id/template-masters/:name/versions", a.publishMasterVersion, a.requireWrite)
 	g.GET("/template-masters/:id", a.getMaster)
 
-	g.PUT("/template-variants", a.upsertVariant)
+	g.PUT("/template-variants", a.upsertVariant, a.requireWrite)
 	g.GET("/template-variants", a.getVariant)
 	g.GET("/customers/:id/variants", a.listCustomerVariants)
 
@@ -93,6 +93,19 @@ func (a *API) requireAdmin(next echo.HandlerFunc) echo.HandlerFunc {
 			return echo.NewHTTPError(http.StatusUnauthorized, "session owner missing")
 		}
 		c.Set("adminUser", u)
+		return next(c)
+	}
+}
+
+// requireWrite gates a mutating route to the admin role; every other role
+// (viewer, developer, ...) is read-only. Runs after requireAdmin, so the
+// resolved user is already in context.
+func (a *API) requireWrite(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		u, ok := c.Get("adminUser").(store.AdminUser)
+		if !ok || u.Role != "admin" {
+			return echo.NewHTTPError(http.StatusForbidden, "admin role required")
+		}
 		return next(c)
 	}
 }

@@ -19,7 +19,8 @@ export const keys = {
   usage: (days: number) => ["usage", days] as const,
 };
 
-export const useMe = () => useQuery({ queryKey: keys.me, queryFn: api.auth.me });
+export const useMe = (enabled = true) =>
+  useQuery({ queryKey: keys.me, queryFn: api.auth.me, enabled });
 
 export const useClients = () =>
   useQuery({ queryKey: keys.clients, queryFn: api.clients.list });

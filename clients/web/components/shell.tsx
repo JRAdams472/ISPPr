@@ -1,14 +1,25 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { setToken } from "@/lib/api/client";
+import { auth } from "@/lib/api/resources";
 import { NAV, navActive } from "@/lib/nav";
+import { useMe } from "@/lib/queries";
 
 // Portal app shell: dark rail sidebar with brand + primary nav, light
 // content area. Operate-mode surface — scannability first, decoration last.
 
 export function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const me = useMe();
+
+  const signOut = async () => {
+    await auth.logout().catch(() => undefined);
+    setToken("");
+    router.replace("/login");
+  };
 
   return (
     <div className="flex min-h-[100dvh]">
@@ -50,8 +61,17 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </ul>
         </nav>
 
-        <footer className="border-t border-zinc-900 px-5 py-4 text-[11px] text-zinc-500">
-          Admin portal
+        <footer className="border-t border-zinc-900 px-5 py-4">
+          <p className="truncate text-[11px] text-zinc-500">
+            {me.data ? `${me.data.name} (${me.data.role})` : "Admin portal"}
+          </p>
+          <button
+            type="button"
+            onClick={signOut}
+            className="mt-1 text-[11px] text-zinc-400 underline-offset-2 hover:text-zinc-100 hover:underline"
+          >
+            Sign out
+          </button>
         </footer>
       </aside>
 
