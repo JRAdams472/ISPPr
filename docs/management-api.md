@@ -84,6 +84,18 @@ GET /admin/customers/:id/variants                                  → [variant]
 `variant` = `{id:"var_…", master_id, customer_id, overlay:{"css_patch"?,
 "toggles"?,"branding"?}, updated_at}`
 
+### Requests (ops view)
+
+```http
+GET /admin/requests/{id} →
+{"id":"req_…","client_id","customer_id","package_name","status",
+ "error"?,"metrics"?,"webhook_status":"NONE|PENDING|DELIVERED|EXHAUSTED",
+ "webhook_log":[{"at":"…","attempt":1,"code":200}],"created_at"}
+```
+
+Cross-tenant ops view of a generation request, including webhook
+delivery status and the per-attempt log (MPE-37).
+
 ### Usage (dashboard)
 
 ```http

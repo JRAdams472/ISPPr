@@ -72,7 +72,8 @@ func main() {
 		jobs.WithMaxDocs(cfg.MaxDocsPerPkg),
 		jobs.WithSyncBudget(cfg.SyncBudget),
 		jobs.WithWorkers(cfg.WorkerCount),
-		jobs.WithSingleDocSkipZip(cfg.SingleDocSkipZip))
+		jobs.WithSingleDocSkipZip(cfg.SingleDocSkipZip),
+		jobs.WithWebhook(cfg.WebhookSecret, cfg.WebhookMaxAttempts))
 	go orch.Start(context.Background())
 
 	e := server.New(cfg, store.New(pool), pool, orch)

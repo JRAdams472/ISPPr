@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -26,6 +27,7 @@ import (
 	"github.com/jradams472/isppr/internal/storage"
 	"github.com/jradams472/isppr/internal/store"
 	"github.com/labstack/echo/v4"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // jid mints unique fixture IDs — random, since `go test` runs package
@@ -448,5 +450,164 @@ func TestArtifactNaming(t *testing.T) {
 	}
 	if got := jobs.ArtifactName("My Pack!", "req_1", true); got != "My_Pack_req_1.pdf" {
 		t.Fatalf("pdf name: %q", got)
+	}
+}
+
+// seedHook seeds a fixture whose customer carries a webhook_url.
+func seedHook(t *testing.T, q *store.Queries, url string) fx {
+	t.Helper()
+	f := seed(t, q)
+	if _, err := q.UpdateCustomer(context.Background(), store.UpdateCustomerParams{
+		ID: f.customer, WebhookUrl: pgtype.Text{String: url, Valid: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+// waitWebhook polls the request row until webhook_status leaves
+// NONE/PENDING (or the deadline hits).
+func waitWebhook(t *testing.T, q *store.Queries, rid string) store.GenerationRequest {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		row, err := q.GetRequest(context.Background(), rid)
+		if err == nil && (row.WebhookStatus == "DELIVERED" || row.WebhookStatus == "EXHAUSTED") {
+			return row
+		}
+		time.Sleep(60 * time.Millisecond)
+	}
+	row, _ := q.GetRequest(context.Background(), rid)
+	t.Fatalf("webhook never settled: %s", row.WebhookStatus)
+	return row
+}
+
+// Completion webhook: signed POST to the customer's webhook_url with the
+// egress-shaped body, HMAC-verifiable with WEBHOOK_SECRET.
+func TestWebhookDelivery(t *testing.T) {
+	const secret = "test-hook-secret"
+	type gotCall struct {
+		body string
+		sig  string
+	}
+	calls := make(chan gotCall, 4)
+	hook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		calls <- gotCall{string(b), r.Header.Get("X-ISPPr-Signature")}
+		w.WriteHeader(200)
+	}))
+	t.Cleanup(hook.Close)
+
+	env := newEnvHandler(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("%PDF-fake"))
+	}, 3*time.Second, nil, jobs.WithWebhook(secret, 3))
+	f := seedHook(t, env.q, hook.URL)
+	code, body, _ := doReq(t, env.e, http.MethodPost, "/api/v1/packages/generate", genBody(f), f.key, "")
+	if code != 201 {
+		t.Fatalf("%d %v", code, body)
+	}
+	rid := body["request_id"].(string)
+	row := waitWebhook(t, env.q, rid)
+	if row.WebhookStatus != "DELIVERED" {
+		t.Fatalf("webhook_status: %s", row.WebhookStatus)
+	}
+
+	select {
+	case c := <-calls:
+		mac := hmac.New(sha256.New, []byte(secret))
+		mac.Write([]byte(c.body))
+		want := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+		if c.sig != want {
+			t.Fatalf("signature: got %q want %q", c.sig, want)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(c.body), &payload); err != nil {
+			t.Fatalf("payload not json: %v", err)
+		}
+		if payload["request_id"] != rid || payload["status"] != "COMPLETED" {
+			t.Fatalf("payload: %v", payload)
+		}
+		if payload["metrics"] == nil || payload["results"] == nil {
+			t.Fatalf("payload missing metrics/results: %v", payload)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("receiver never got a call")
+	}
+}
+
+// Bounded retries: a permanently-failing receiver exhausts the attempt
+// budget and the row lands EXHAUSTED with a full log.
+func TestWebhookRetryBound(t *testing.T) {
+	var calls atomic.Int32
+	hook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(500)
+	}))
+	t.Cleanup(hook.Close)
+
+	env := newEnvHandler(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("%PDF-fake"))
+	}, 3*time.Second, nil, jobs.WithWebhook("s", 2)) // bound: 2 attempts
+	f := seedHook(t, env.q, hook.URL)
+	code, body, _ := doReq(t, env.e, http.MethodPost, "/api/v1/packages/generate", genBody(f), f.key, "")
+	if code != 201 {
+		t.Fatalf("%d %v", code, body)
+	}
+	row := waitWebhook(t, env.q, body["request_id"].(string))
+	if row.WebhookStatus != "EXHAUSTED" {
+		t.Fatalf("webhook_status: %s", row.WebhookStatus)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("attempts: got %d want exactly 2", calls.Load())
+	}
+	var log []map[string]any
+	if err := json.Unmarshal(row.WebhookLog, &log); err != nil {
+		t.Fatalf("webhook_log not json: %v", err)
+	}
+	if len(log) != 2 || log[0]["code"].(float64) != 500 {
+		t.Fatalf("webhook_log: %v", log)
+	}
+
+	// Admin request view surfaces the failure.
+	u := jid("admin")
+	hash, _ := bcrypt.GenerateFromPassword([]byte("pw"), bcrypt.MinCost)
+	if _, err := env.q.CreateAdminUser(context.Background(), store.CreateAdminUserParams{
+		ID: u, Email: u + "@t.dev", Name: u, PasswordHash: string(hash), Role: "admin",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	code, login, _ := doReq(t, env.e, http.MethodPost, "/api/v1/admin/login",
+		fmt.Sprintf(`{"email":%q,"password":"pw"}`, u+"@t.dev"), "", "")
+	if code != 200 {
+		t.Fatalf("admin login: %d", code)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/requests/"+row.ID, nil)
+	req.Header.Set(echo.HeaderAuthorization, "Bearer "+login["token"].(string))
+	rec := httptest.NewRecorder()
+	env.e.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("admin request view: %d", rec.Code)
+	}
+	var view map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &view)
+	if view["webhook_status"] != "EXHAUSTED" || view["webhook_log"] == nil {
+		t.Fatalf("admin view missing delivery info: %v", view)
+	}
+}
+
+// Customer without webhook_url: status stays NONE, no delivery.
+func TestWebhookNoTarget(t *testing.T) {
+	env := newEnv(t, 0)
+	f := seed(t, env.q)
+	code, body, _ := doReq(t, env.e, http.MethodPost, "/api/v1/packages/generate", genBody(f), f.key, "")
+	if code != 201 {
+		t.Fatalf("%d %v", code, body)
+	}
+	row, err := env.q.GetRequest(context.Background(), body["request_id"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.WebhookStatus != "NONE" {
+		t.Fatalf("webhook_status: %s", row.WebhookStatus)
 	}
 }
