@@ -1,11 +1,13 @@
 @import "tailwindcss";
 
-/* GitHub-dark palette, matching the MPEx admin theme. */
+/* ISPPr theme: "paper + ink" — warm-neutral content surfaces, ink text, a
+   single restrained teal accent. Light-first ops tool. */
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 body {
-  background: #0d1117;
-  color: #e6edf3;
+  background: #fafaf9; /* stone-50 */
+  color: #18181b; /* zinc-900 */
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
