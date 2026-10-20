@@ -21,6 +21,10 @@ import (
 	"github.com/jradams472/isppr/internal/storage"
 	"github.com/jradams472/isppr/internal/store"
 	"github.com/jradams472/isppr/internal/templates"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // DocPayload is one document in a generation request.
@@ -159,6 +163,12 @@ func (o *Orchestrator) Submit(ctx context.Context, clientID string, req Generate
 			return store.GenerationRequest{}, false, err
 		}
 	}
+	ctx, enq := otel.Tracer("isppr/jobs").Start(ctx, "queue.enqueue",
+		trace.WithAttributes(
+			attribute.String("client.id", clientID),
+			attribute.String("customer.id", req.CustomerID),
+			attribute.String("package.name", req.PackageName),
+			attribute.Int("document.count", len(req.Documents))))
 	row, err := o.q.CreateGenerationRequest(ctx, store.CreateGenerationRequestParams{
 		ID:             newID("req"),
 		ClientID:       clientID,
@@ -167,14 +177,22 @@ func (o *Orchestrator) Submit(ctx context.Context, clientID string, req Generate
 		PackageName:    req.PackageName,
 	})
 	if err != nil {
+		enq.RecordError(err)
+		enq.SetStatus(codes.Error, err.Error())
+		enq.End()
 		return store.GenerationRequest{}, false, err
 	}
+	enq.SetAttributes(attribute.String("request.id", row.ID))
 	docs, _ := json.Marshal(req.Documents)
 	if _, err := o.q.CreateJob(ctx, store.CreateJobParams{
 		ID: newID("job"), RequestID: row.ID, ClientID: clientID, Payload: docs,
 	}); err != nil {
+		enq.RecordError(err)
+		enq.SetStatus(codes.Error, err.Error())
+		enq.End()
 		return store.GenerationRequest{}, false, err
 	}
+	enq.End()
 	o.done.Store(row.ID, make(chan struct{}))
 	select {
 	case o.wake <- struct{}{}:
@@ -222,7 +240,7 @@ func (o *Orchestrator) work(ctx context.Context) {
 		case errors.Is(err, context.Canceled):
 			return
 		default:
-			slog.Warn("job claim failed", "err", err)
+			slog.WarnContext(ctx, "job claim failed", "err", err)
 		}
 		select {
 		case <-ctx.Done():
@@ -236,8 +254,18 @@ func (o *Orchestrator) work(ctx context.Context) {
 // execute runs one job through resolve → render → pdf → zip → store.
 func (o *Orchestrator) execute(ctx context.Context, job store.GenerationJob) {
 	start := time.Now()
+	// The worker picks up async — there is no inbound request context to
+	// continue, so this is the root of the generation trace tree.
+	ctx, span := otel.Tracer("isppr/jobs").Start(ctx, "job.execute",
+		trace.WithAttributes(
+			attribute.String("request.id", job.RequestID),
+			attribute.String("job.id", job.ID),
+			attribute.Int("job.attempt", int(job.Attempts))))
+	defer span.End()
 	fail := func(err error, transient bool) {
-		slog.Warn("generation failed", "request", job.RequestID, "err", err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		slog.WarnContext(ctx, "generation failed", "request", job.RequestID, "err", err)
 		if transient && job.Attempts < maxAttempts {
 			_ = o.q.RequeueJob(ctx, store.RequeueJobParams{
 				ID: job.ID, Error: pgText(err.Error()),
@@ -278,23 +306,35 @@ func (o *Orchestrator) execute(ctx context.Context, job store.GenerationJob) {
 	parsing := time.Now()
 	rdocs := make([]render.Doc, len(docs))
 	for i, d := range docs {
+		_, dspan := otel.Tracer("isppr/jobs").Start(ctx, "doc.bind",
+			trace.WithAttributes(attribute.String("template.id", d.Template)))
 		resolved, err := templates.ResolveFor(ctx, o.q, req.ClientID, req.CustomerID, d.Template)
 		if err != nil {
+			dspan.RecordError(err)
+			dspan.SetStatus(codes.Error, err.Error())
+			dspan.End()
 			fail(fmt.Errorf("resolve %s: %w", d.Template, err), false)
 			return
 		}
 		html, err := render.Render(resolved, d.Payload)
 		if err != nil {
+			dspan.RecordError(err)
+			dspan.SetStatus(codes.Error, err.Error())
+			dspan.End()
 			fail(fmt.Errorf("render %s: %w", d.Template, err), false)
 			return
 		}
+		dspan.End()
 		rdocs[i] = render.Doc{ID: d.Template, HTML: html, CSS: resolved.CSS}
 	}
 	parsingMs := time.Since(parsing).Milliseconds()
 
 	// Gotenberg fan-out (rendering stage).
 	rendering := time.Now()
-	results := o.pool.PDFBatch(ctx, rdocs)
+	rctx, rspan := otel.Tracer("isppr/jobs").Start(ctx, "render.batch",
+		trace.WithAttributes(attribute.Int("document.count", len(rdocs))))
+	results := o.pool.PDFBatch(rctx, rdocs)
+	rspan.End()
 	renderingMs := time.Since(rendering).Milliseconds()
 	for _, r := range results {
 		if r.Err != nil {
@@ -319,24 +359,43 @@ func (o *Orchestrator) execute(ctx context.Context, job store.GenerationJob) {
 	if raw {
 		data = results[0].PDF
 	} else {
+		_, zspan := otel.Tracer("isppr/jobs").Start(ctx, "zip.compress")
 		if data, err = zipResults(results); err != nil {
+			zspan.RecordError(err)
+			zspan.SetStatus(codes.Error, err.Error())
+			zspan.End()
 			fail(fmt.Errorf("zip: %w", err), false)
 			return
 		}
+		zspan.SetAttributes(attribute.Int("package.bytes", len(data)))
+		zspan.End()
 	}
+	_, uspan := otel.Tracer("isppr/jobs").Start(ctx, "storage.put",
+		trace.WithAttributes(attribute.String("output.key", key)))
 	if err := o.store.Put(ctx, key, bytes.NewReader(data)); err != nil {
+		uspan.RecordError(err)
+		uspan.SetStatus(codes.Error, err.Error())
+		uspan.End()
 		fail(fmt.Errorf("store output: %w", err), true)
 		return
 	}
+	uspan.End()
 	compressionMs := time.Since(compressing).Milliseconds()
 
-	metrics, _ := json.Marshal(Metrics{
+	m := Metrics{
 		TotalDocuments: len(docs),
 		ParsingMs:      parsingMs,
 		RenderingMs:    renderingMs,
 		CompressionMs:  compressionMs,
 		TotalMs:        time.Since(start).Milliseconds(),
-	})
+	}
+	span.SetAttributes(
+		attribute.Int("metrics.total_documents", m.TotalDocuments),
+		attribute.Int64("metrics.parsing_ms", m.ParsingMs),
+		attribute.Int64("metrics.rendering_ms", m.RenderingMs),
+		attribute.Int64("metrics.compression_ms", m.CompressionMs),
+		attribute.Int64("metrics.total_ms", m.TotalMs))
+	metrics, _ := json.Marshal(m)
 	if err := o.q.CompleteRequest(ctx, store.CompleteRequestParams{
 		ID: req.ID, Metrics: metrics, OutputKey: pgText(key),
 	}); err != nil {

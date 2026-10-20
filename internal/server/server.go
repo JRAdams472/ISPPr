@@ -13,6 +13,7 @@ import (
 	"github.com/jradams472/isppr/internal/tenancy"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
 )
 
 // New builds the Echo engine with global middleware and the scaffold routes.
@@ -28,6 +29,11 @@ func New(cfg config.Config, q *store.Queries, pool *pgxpool.Pool, orch *jobs.Orc
 	e.Use(middleware.Recover())
 	e.Use(middleware.RequestID())
 	e.Use(middleware.Logger())
+	// Ingress spans only exist when an exporter is configured — off mode
+	// keeps the middleware chain identical to before.
+	if cfg.OtelTracesEndpoint != "" {
+		e.Use(otelecho.Middleware(cfg.OtelServiceName))
+	}
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
 		AllowOrigins: []string{cfg.CORSOrigin},
 	}))

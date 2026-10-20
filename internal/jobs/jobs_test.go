@@ -27,6 +27,9 @@ import (
 	"github.com/jradams472/isppr/internal/storage"
 	"github.com/jradams472/isppr/internal/store"
 	"github.com/labstack/echo/v4"
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -193,6 +196,87 @@ func TestGenerateSync201(t *testing.T) {
 	}
 }
 
+// TestGenerateSpanTree pins the MPE-44 trace shape: one sync generate
+// produces queue.enqueue on the request trace plus the full worker-side
+// job.execute tree with metrics stamped as span attributes.
+func TestGenerateSpanTree(t *testing.T) {
+	exp := tracetest.NewInMemoryExporter()
+	prev := otel.GetTracerProvider()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exp))
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(prev)
+		_ = tp.Shutdown(context.Background())
+	})
+
+	env := newEnv(t, 0)
+	f := seed(t, env.q)
+	code, body, _ := doReq(t, env.e, http.MethodPost, "/api/v1/packages/generate", genBody(f), f.key, "")
+	if code != http.StatusCreated {
+		t.Fatalf("want 201, got %d (%v)", code, body)
+	}
+
+	byName := map[string]tracetest.SpanStub{}
+	for _, s := range exp.GetSpans() {
+		byName[s.Name] = s
+	}
+	for _, want := range []string{
+		"queue.enqueue", "job.execute", "doc.bind",
+		"render.batch", "gotenberg.convert", "zip.compress", "storage.put",
+	} {
+		if _, ok := byName[want]; !ok {
+			t.Errorf("missing span %q (have %v)", want, spanNames(exp.GetSpans()))
+		}
+	}
+
+	// Parentage: the worker tree hangs off job.execute, convert off batch.
+	for child, parent := range map[string]string{
+		"doc.bind":          "job.execute",
+		"render.batch":      "job.execute",
+		"zip.compress":      "job.execute",
+		"storage.put":       "job.execute",
+		"gotenberg.convert": "render.batch",
+	} {
+		c, okc := byName[child]
+		p, okp := byName[parent]
+		if okc && okp && c.Parent.SpanID() != p.SpanContext.SpanID() {
+			t.Errorf("%s is not a child of %s", child, parent)
+		}
+	}
+
+	// The spec's metrics block lands on the generate span.
+	var haveTotal, haveRender bool
+	for _, a := range byName["job.execute"].Attributes {
+		switch string(a.Key) {
+		case "metrics.total_ms":
+			haveTotal = true
+		case "metrics.rendering_ms":
+			haveRender = true
+		}
+	}
+	if !haveTotal || !haveRender {
+		t.Errorf("job.execute missing metrics attributes: %v", byName["job.execute"].Attributes)
+	}
+	// convert span carries the endpoint + status.
+	var haveEp bool
+	for _, a := range byName["gotenberg.convert"].Attributes {
+		if a.Key == "gotenberg.endpoint" {
+			haveEp = true
+		}
+	}
+	if !haveEp {
+		t.Error("gotenberg.convert missing endpoint attribute")
+	}
+}
+
+func spanNames(spans []tracetest.SpanStub) []string {
+	names := make([]string, 0, len(spans))
+	for _, s := range spans {
+		names = append(names, s.Name)
+	}
+	return names
+}
+
 func TestGenerateAsync202AndStatus(t *testing.T) {
 	// 500ms render vs 50ms budget → guaranteed async path.
 	env := newEnvBudget(t, 500*time.Millisecond, 50*time.Millisecond)
@@ -243,6 +327,41 @@ func TestGenerateIdempotentRetry(t *testing.T) {
 	if err != nil || row.ID != b1["request_id"] {
 		t.Fatalf("stored request: %v %v", row.ID, err)
 	}
+}
+
+// TestGenerateBindFailure exercises the doc.bind error span path: the
+// master exists (passes Submit's ownership check) but its Handlebars
+// fails to compile, so the job lands FAILED.
+func TestGenerateBindFailure(t *testing.T) {
+	env := newEnv(t, 0)
+	f := seed(t, env.q)
+	bad := "tmpl_bad_" + jid("n")
+	if _, err := env.q.CreateTemplateMaster(context.Background(), store.CreateTemplateMasterParams{
+		ID: jid("tm"), ClientID: f.client, Name: bad,
+		Html: "{{#each items}}<li>{{", Css: "", Version: 1, Defaults: []byte("{}"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	body := fmt.Sprintf(`{"customer_id":%q,"package_name":"Bad","documents":[{"template_id":%q,"payload":{}}]}`,
+		f.customer, bad)
+	code, b, _ := doReq(t, env.e, http.MethodPost, "/api/v1/packages/generate", body, f.key, "")
+	if code != http.StatusCreated && code != http.StatusAccepted && code != http.StatusOK {
+		t.Fatalf("generate: %d %v", code, b)
+	}
+	// Poll for the terminal FAILED status (sync path may already be there).
+	rid, _ := b["request_id"].(string)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		_, st, _ := doReq(t, env.e, http.MethodGet, "/api/v1/packages/"+rid, "", f.key, "")
+		if st["status"] == "FAILED" {
+			if st["error"] == "" {
+				t.Fatal("failed request should carry the bind error")
+			}
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("never failed: %v", b)
 }
 
 func TestGenerateValidation(t *testing.T) {
