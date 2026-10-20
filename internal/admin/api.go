@@ -64,6 +64,7 @@ func (a *API) Mount(v1 *echo.Group) {
 	g.GET("/template-variants", a.getVariant)
 	g.GET("/customers/:id/variants", a.listCustomerVariants)
 
+	g.GET("/requests", a.listRequests)
 	g.GET("/requests/:id", a.getRequest)
 	g.GET("/usage", a.usage)
 }

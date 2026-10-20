@@ -13,6 +13,13 @@ SELECT * FROM generation_requests WHERE id = $1 AND client_id = $2;
 -- name: GetRequest :one
 SELECT * FROM generation_requests WHERE id = $1;
 
+-- name: ListRequestsFiltered :many
+SELECT * FROM generation_requests
+WHERE (sqlc.narg(client_id)::text IS NULL OR client_id = sqlc.narg(client_id))
+  AND (sqlc.narg(status)::text IS NULL OR status = sqlc.narg(status))
+ORDER BY created_at DESC
+LIMIT sqlc.narg('limit');
+
 -- name: SetRequestStatus :exec
 UPDATE generation_requests SET status = $2, error = $3 WHERE id = $1;
 

@@ -6,6 +6,7 @@ import {
   customers,
   masters,
   requests,
+  usage,
   variants,
 } from "../lib/api/resources";
 
@@ -118,6 +119,20 @@ describe("resources", () => {
   it("request ops view", async () => {
     const calls = stubFetch();
     await requests.get("req_1");
+    await requests.list({ client_id: "cli_1", status: "FAILED", limit: 10 });
+    await requests.list();
     expect(calls[0].url).toBe(`${A}/requests/req_1`);
+    expect(calls[1].url).toBe(
+      `${A}/requests?client_id=cli_1&status=FAILED&limit=10`,
+    );
+    expect(calls[2].url).toBe(`${A}/requests`);
+  });
+
+  it("usage window + optional client filter", async () => {
+    const calls = stubFetch();
+    await usage.get(30);
+    await usage.get(14, "cli_1");
+    expect(calls[0].url).toBe(`${A}/usage?days=30`);
+    expect(calls[1].url).toBe(`${A}/usage?days=14&client_id=cli_1`);
   });
 });

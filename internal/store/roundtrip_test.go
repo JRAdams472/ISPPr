@@ -67,7 +67,7 @@ func TestClientUpdateAndStatus(t *testing.T) {
 		t.Fatalf("set status: %v %v", got, err)
 	}
 	list, err := q.ListClients(ctx)
-	if err != nil || !slices.ContainsFunc(list, func(c Client) bool { return c.ID == id }) {
+	if err != nil || !slices.ContainsFunc(list, func(c ListClientsRow) bool { return c.ID == id }) {
 		t.Fatalf("list: %v %v", len(list), err)
 	}
 }
