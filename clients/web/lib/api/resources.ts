@@ -1,7 +1,7 @@
 // Resource functions for the management API — one per endpoint in
 // docs/management-api.md. All paths are under /api/v1/admin.
 
-import { get, patch, post, put } from "./client";
+import { get, patch, post, postBlob, put } from "./client";
 import type {
   AdminUser,
   ApiKey,
@@ -91,6 +91,11 @@ export const variants = {
     ),
   listForCustomer: (customerId: string) =>
     get<TemplateVariant[]>(`${A}/customers/${customerId}/variants`),
+  preview: (body: {
+    master_id: string;
+    overlay?: Record<string, unknown>;
+    data?: Record<string, unknown>;
+  }) => postBlob(`${A}/template-variants/preview`, body),
 };
 
 export const requests = {

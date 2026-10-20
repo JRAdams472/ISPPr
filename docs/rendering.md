@@ -50,6 +50,11 @@ never silent empty output.
 Pure path lookups (`{{foo}}`, `{{a.b.c}}`) are *not* calls — they render
 empty when the path is missing (standard Handlebars behavior).
 
+**Field names must not shadow helper names.** A payload key named `title`,
+`date`, `join`, etc. resolves to the *helper*, not the value — `{{title}}`
+renders helper internals instead of `data.title`. Prefix collision-prone
+fields (`doc_title`, `due_date`) when authoring templates.
+
 ## Injection safety
 
 - `{{path}}` and helper results are HTML-escaped by raymond

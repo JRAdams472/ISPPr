@@ -6,7 +6,9 @@ import (
 	"net/http"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jradams472/isppr/internal/render"
 	"github.com/jradams472/isppr/internal/store"
+	"github.com/jradams472/isppr/internal/templates"
 	"github.com/labstack/echo/v4"
 )
 
@@ -143,7 +145,69 @@ func (a *API) listCustomerVariants(c echo.Context) error {
 	}
 	out := make([]variantOut, len(rows))
 	for i, r := range rows {
-		out[i] = variantDTO(r)
+		out[i] = variantOut{
+			ID: r.ID, MasterID: r.MasterID, MasterName: r.MasterName,
+			CustomerID: r.CustomerID, Overlay: r.Overlay,
+			UpdatedAt: r.UpdatedAt.Time,
+		}
 	}
 	return c.JSON(http.StatusOK, out)
+}
+
+// previewReq is the draft-variant preview payload: resolve master + the
+// supplied overlay against sample data without persisting anything.
+type previewReq struct {
+	MasterID string          `json:"master_id"`
+	Overlay  json.RawMessage `json:"overlay"`
+	Data     json.RawMessage `json:"data"`
+}
+
+// previewVariant renders a draft overlay to PDF through the same resolve →
+// Handlebars → Gotenberg path the pipeline uses, so the preview is faithful
+// to what generation will produce once the variant is saved. Read-only: the
+// overlay is applied in memory, never upserted.
+func (a *API) previewVariant(c echo.Context) error {
+	if a.rpool == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "render pool unavailable")
+	}
+	var req previewReq
+	if err := c.Bind(&req); err != nil || req.MasterID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "master_id required")
+	}
+	ctx := c.Request().Context()
+	master, err := a.q.GetMaster(ctx, req.MasterID)
+	if err != nil {
+		return err
+	}
+	base, err := templates.Base()
+	if err != nil {
+		return err
+	}
+	ov, err := templates.ParseOverlay(req.Overlay)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid overlay: "+err.Error())
+	}
+	resolved, err := templates.Resolve(base, &master, &ov)
+	if err != nil {
+		return err
+	}
+	var data map[string]any
+	if len(req.Data) > 0 {
+		if err := json.Unmarshal(req.Data, &data); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "data must be a JSON object")
+		}
+	}
+	html, err := render.Render(resolved, data)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "render: "+err.Error())
+	}
+	pdf, err := a.rpool.PDF(ctx, html, resolved.CSS)
+	if err != nil {
+		var rerr *render.RenderError
+		if errors.As(err, &rerr) && rerr.Kind == render.KindRenderFailed {
+			return echo.NewHTTPError(http.StatusBadRequest, rerr.Error())
+		}
+		return err
+	}
+	return c.Blob(http.StatusOK, "application/pdf", pdf)
 }

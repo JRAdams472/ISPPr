@@ -7,13 +7,17 @@ import {
   useApiKeys,
   useClient,
   useClients,
+  useCustomer,
   useCustomers,
+  useCustomerVariants,
   useLogin,
+  useMaster,
   useMasters,
   useMe,
   useRequests,
   useRequestView,
   useUsage,
+  useVariant,
 } from "../lib/queries";
 
 function wrapper({ children }: { children: React.ReactNode }) {
@@ -131,9 +135,60 @@ describe("queries", () => {
     });
   });
 
+  it("customer/master/variant hooks fetch their resources", async () => {
+    const fetchMock = ok({ id: "x" });
+    vi.stubGlobal("fetch", fetchMock);
+    const c = renderHook(() => useCustomer("cust_1"), { wrapper });
+    const m = renderHook(() => useMaster("tmpl_1"), { wrapper });
+    const vs = renderHook(() => useCustomerVariants("cust_1"), { wrapper });
+    const v = renderHook(() => useVariant("tmpl_1", "cust_1"), { wrapper });
+    await waitFor(() => expect(c.result.current.isSuccess).toBe(true));
+    await waitFor(() => expect(m.result.current.isSuccess).toBe(true));
+    await waitFor(() => expect(vs.result.current.isSuccess).toBe(true));
+    await waitFor(() => expect(v.result.current.isSuccess).toBe(true));
+    const urls = fetchMock.mock.calls.map(
+      (x) => (x as unknown as [string])[0],
+    );
+    expect(urls).toContain(
+      "http://localhost:8090/api/v1/admin/customers/cust_1",
+    );
+    expect(urls).toContain(
+      "http://localhost:8090/api/v1/admin/template-masters/tmpl_1",
+    );
+    expect(urls).toContain(
+      "http://localhost:8090/api/v1/admin/customers/cust_1/variants",
+    );
+    expect(urls).toContain(
+      "http://localhost:8090/api/v1/admin/template-variants?master_id=tmpl_1&customer_id=cust_1",
+    );
+  });
+
+  it("useVariant surfaces 404 as error without retrying", async () => {
+    const notFound = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ status: 404, title: "nf" }), {
+          status: 404,
+        }),
+    );
+    vi.stubGlobal("fetch", notFound);
+    const { result } = renderHook(() => useVariant("tmpl_1", "cust_1"), {
+      wrapper: Providers,
+    });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(notFound).toHaveBeenCalledTimes(1);
+  });
+
   it("key factories stay stable", () => {
     expect(keys.clients).toEqual(["clients"]);
     expect(keys.customers("c1")).toEqual(["clients", "c1", "customers"]);
+    expect(keys.customer("cu1")).toEqual(["customers", "cu1"]);
+    expect(keys.master("t1")).toEqual(["template-masters", "t1"]);
+    expect(keys.variants("cu1")).toEqual(["customers", "cu1", "variants"]);
+    expect(keys.variant("t1", "cu1")).toEqual([
+      "template-variants",
+      "t1",
+      "cu1",
+    ]);
     expect(keys.request("r1")).toEqual(["requests", "r1"]);
     expect(keys.requests({ client_id: "c1" })).toEqual([
       "requests",

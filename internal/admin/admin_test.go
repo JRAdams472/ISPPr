@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jradams472/isppr/internal/config"
+	"github.com/jradams472/isppr/internal/render"
 	"github.com/jradams472/isppr/internal/server"
 	"github.com/jradams472/isppr/internal/store"
 	"github.com/labstack/echo/v4"
@@ -28,7 +30,7 @@ func sha256hex(s string) string {
 
 // Request-level coverage for the whole /api/v1/admin surface. Runs against
 // real Postgres (compose db locally, service container in CI).
-func testServer(t *testing.T) (*echo.Echo, *store.Queries, *pgxpool.Pool) {
+func testServer(t *testing.T, rpool *render.Pool) (*echo.Echo, *store.Queries, *pgxpool.Pool) {
 	t.Helper()
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
@@ -43,7 +45,7 @@ func testServer(t *testing.T) (*echo.Echo, *store.Queries, *pgxpool.Pool) {
 	}
 	t.Cleanup(pool.Close)
 	return server.New(config.Config{CORSOrigin: "http://localhost:3100"},
-		store.New(pool), pool, nil), store.New(pool), pool
+		store.New(pool), pool, nil, rpool), store.New(pool), pool
 }
 
 func do(t *testing.T, e *echo.Echo, method, path, body, token string) (int, map[string]any) {
@@ -82,7 +84,7 @@ func doList(t *testing.T, e *echo.Echo, path, token string) (int, []map[string]a
 }
 
 func TestAdminAPI(t *testing.T) {
-	e, q, pool := testServer(t)
+	e, q, pool := testServer(t, nil)
 	ctx := context.Background()
 
 	// Seed an admin user to log in with (unique email per run — the dev DB
@@ -322,7 +324,7 @@ func TestAdminAPI(t *testing.T) {
 }
 
 func TestAdminRoleGate(t *testing.T) {
-	e, q, _ := testServer(t)
+	e, q, _ := testServer(t, nil)
 	ctx := context.Background()
 
 	// A viewer can log in and read, but writes are 403 — roles gate
@@ -352,5 +354,81 @@ func TestAdminRoleGate(t *testing.T) {
 	}
 	if code, _ := do(t, e, http.MethodPost, "/api/v1/admin/logout", "", tok); code != http.StatusNoContent {
 		t.Fatalf("viewer logout: got %d, want 204", code)
+	}
+}
+
+// TestVariantPreview exercises the draft-overlay preview path end-to-end:
+// the overlay is applied in memory (never upserted) and the fake Gotenberg
+// sees the toggled/patched document.
+func TestVariantPreview(t *testing.T) {
+	var gotBody []byte
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/pdf")
+		_, _ = w.Write([]byte("%PDF-fake"))
+	}))
+	t.Cleanup(fake.Close)
+	rpool, err := render.NewPool([]string{fake.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, q, _ := testServer(t, rpool)
+	ctx := context.Background()
+
+	sfx := fmt.Sprintf("%d", rand.Int63())
+	hash, _ := bcrypt.GenerateFromPassword([]byte("pw"), bcrypt.MinCost)
+	if _, err := q.CreateAdminUser(ctx, store.CreateAdminUserParams{
+		ID: "adm_p" + sfx, Email: "p" + sfx + "@isppr.local",
+		Name: "P", PasswordHash: string(hash), Role: "admin",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	code, login := do(t, e, http.MethodPost, "/api/v1/admin/login",
+		fmt.Sprintf(`{"email":%q,"password":"pw"}`, "p"+sfx+"@isppr.local"), "")
+	if code != http.StatusOK {
+		t.Fatalf("login: %d", code)
+	}
+	tok := login["token"].(string)
+
+	code, cli := do(t, e, http.MethodPost, "/api/v1/admin/clients", `{"name":"PV"}`, tok)
+	if code != http.StatusCreated {
+		t.Fatalf("client: %d", code)
+	}
+	cliID := cli["id"].(string)
+	code, m := do(t, e, http.MethodPost, "/api/v1/admin/clients/"+cliID+"/template-masters",
+		`{"name":"doc","html":"<h1>{{doc_title}}</h1>{{#if blocks.extra}}<p>EXTRA</p>{{/if}}",
+		 "css":"h1{color:black}","defaults":{"toggles":{"extra":false}}}`, tok)
+	if code != http.StatusCreated {
+		t.Fatalf("master: %d", code)
+	}
+	masterID := m["id"].(string)
+
+	// Draft overlay flips the toggle + appends a css_patch — the fake
+	// Gotenberg must see both, and no variant row is written.
+	code, _ = do(t, e, http.MethodPost, "/api/v1/admin/template-variants/preview",
+		`{"master_id":"`+masterID+`","overlay":{"toggles":{"extra":true},"css_patch":".patch{color:red}"},
+		  "data":{"doc_title":"Hi"}}`, tok)
+	if code != http.StatusOK {
+		t.Fatalf("preview: %d", code)
+	}
+	body := string(gotBody)
+	if !strings.Contains(body, "EXTRA") || !strings.Contains(body, ".patch{color:red}") || !strings.Contains(body, "Hi") {
+		t.Fatalf("resolved doc missing overlay/data effects: %s", body)
+	}
+
+	// Nothing persisted: no variant row exists for this master.
+	if code, _ := do(t, e, http.MethodGet,
+		"/api/v1/admin/template-variants?master_id="+masterID+"&customer_id=cust_none", "", tok); code != http.StatusNotFound {
+		t.Fatalf("preview persisted a variant: got %d, want 404", code)
+	}
+
+	// Bad payload shapes → 400, unknown master → 404.
+	if code, _ := do(t, e, http.MethodPost, "/api/v1/admin/template-variants/preview",
+		`{"master_id":"`+masterID+`","overlay":"not-json"}`, tok); code != http.StatusBadRequest {
+		t.Fatalf("bad overlay: got %d, want 400", code)
+	}
+	if code, _ := do(t, e, http.MethodPost, "/api/v1/admin/template-variants/preview",
+		`{"master_id":"tmpl_nope","overlay":{}}`, tok); code != http.StatusNotFound {
+		t.Fatalf("unknown master: got %d, want 404", code)
 	}
 }

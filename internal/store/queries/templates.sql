@@ -47,6 +47,7 @@ ORDER BY m.version DESC
 LIMIT 1;
 
 -- name: ListVariantsForCustomer :many
-SELECT * FROM template_variants
-WHERE customer_id = $1
-ORDER BY created_at;
+SELECT v.*, m.name AS master_name FROM template_variants v
+JOIN template_masters m ON m.id = v.master_id
+WHERE v.customer_id = $1
+ORDER BY v.created_at;

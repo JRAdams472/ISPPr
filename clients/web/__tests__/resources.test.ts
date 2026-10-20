@@ -116,6 +116,44 @@ describe("resources", () => {
     expect(calls[2].url).toBe(`${A}/customers/cust_1/variants`);
   });
 
+  it("variant preview posts the draft overlay and returns a Blob", async () => {
+    const calls = stubFetch();
+    const blob = await variants.preview({
+      master_id: "tm_1",
+      overlay: { toggles: { footer: false } },
+      data: { doc_title: "Hi" },
+    });
+    expect(blob).toBeInstanceOf(Blob);
+    const call = calls[0];
+    expect(call.method).toBe("POST");
+    expect(call.url).toBe(`${A}/template-variants/preview`);
+    expect(call.body).toEqual({
+      master_id: "tm_1",
+      overlay: { toggles: { footer: false } },
+      data: { doc_title: "Hi" },
+    });
+  });
+
+  it("postBlob maps problem+json errors to ApiError", async () => {
+    const { ApiError } = await import("../lib/api/client");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ status: 400, detail: "invalid overlay" }),
+            { status: 400 },
+          ),
+      ),
+    );
+    await expect(
+      variants.preview({ master_id: "tm_1" }),
+    ).rejects.toBeInstanceOf(ApiError);
+    await expect(
+      variants.preview({ master_id: "tm_1" }),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
   it("request ops view", async () => {
     const calls = stubFetch();
     await requests.get("req_1");

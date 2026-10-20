@@ -71,3 +71,30 @@ export const put = <T>(path: string, body: unknown) =>
   request<T>("PUT", path, body);
 export const patch = <T>(path: string, body: unknown) =>
   request<T>("PATCH", path, body);
+
+// Binary variant for endpoints that return a non-JSON body (variant
+// preview PDFs) — same auth + problem+json error mapping.
+export async function postBlob(path: string, body: unknown): Promise<Blob> {
+  const token = getToken();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(`${base()}${path}`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let problem: ProblemDetails = { status: res.status, detail: res.statusText };
+    try {
+      const data = (await res.json()) as ProblemDetails;
+      if (data && typeof data === "object" && "status" in data) problem = data;
+    } catch {
+      // non-JSON error body — keep the status fallback
+    }
+    throw new ApiError(res.status, problem);
+  }
+  return res.blob();
+}
