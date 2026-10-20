@@ -15,6 +15,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jradams472/isppr/internal/store"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Webhook delivery statuses recorded on the request row.
@@ -44,11 +47,16 @@ type webhookEntry struct {
 func (o *Orchestrator) deliver(parent context.Context, requestID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	_ = parent // detached: the request context is already done
+	// Detached from the request/job contexts (they're already done), but
+	// linked back to the job trace so Jaeger shows the association.
+	ctx, span := otel.Tracer("isppr/jobs").Start(ctx, "webhook.deliver",
+		trace.WithAttributes(attribute.String("request.id", requestID)),
+		trace.WithLinks(trace.LinkFromContext(parent)))
+	defer span.End()
 
 	req, err := o.q.GetRequest(ctx, requestID)
 	if err != nil {
-		slog.Warn("webhook: load request", "request", requestID, "err", err)
+		slog.WarnContext(ctx, "webhook: load request", "request", requestID, "err", err)
 		return
 	}
 	target, err := o.q.GetCustomerWebhook(ctx, store.GetCustomerWebhookParams{
@@ -56,14 +64,14 @@ func (o *Orchestrator) deliver(parent context.Context, requestID string) {
 	})
 	if err != nil || !target.Valid || target.String == "" {
 		if !errors.Is(err, pgx.ErrNoRows) {
-			slog.Warn("webhook: lookup customer", "request", requestID, "err", err)
+			slog.WarnContext(ctx, "webhook: lookup customer", "request", requestID, "err", err)
 		}
 		return // stays NONE — customer has no webhook_url
 	}
 
 	body, err := json.Marshal(o.responseFromRequest(ctx, req))
 	if err != nil {
-		slog.Warn("webhook: marshal payload", "request", requestID, "err", err)
+		slog.WarnContext(ctx, "webhook: marshal payload", "request", requestID, "err", err)
 		return
 	}
 	_ = o.q.SetWebhookStatus(ctx, store.SetWebhookStatusParams{
@@ -82,7 +90,7 @@ func (o *Orchestrator) deliver(parent context.Context, requestID string) {
 			_ = o.q.SetWebhookStatus(ctx, store.SetWebhookStatusParams{
 				ID: requestID, WebhookStatus: WebhookDelivered,
 			})
-			slog.Info("webhook delivered", "request", requestID, "attempt", attempt)
+			slog.InfoContext(ctx, "webhook delivered", "request", requestID, "attempt", attempt)
 			return
 		}
 		if attempt < o.webhookAttempts {
@@ -97,7 +105,7 @@ func (o *Orchestrator) deliver(parent context.Context, requestID string) {
 	_ = o.q.SetWebhookStatus(ctx, store.SetWebhookStatusParams{
 		ID: requestID, WebhookStatus: WebhookExhausted,
 	})
-	slog.Warn("webhook exhausted", "request", requestID)
+	slog.WarnContext(ctx, "webhook exhausted", "request", requestID)
 }
 
 // postWebhook sends one signed POST. Response code is returned even on
@@ -124,7 +132,7 @@ func (o *Orchestrator) logWebhook(ctx context.Context, requestID string, e webho
 	if err := o.q.AppendWebhookLog(ctx, store.AppendWebhookLogParams{
 		ID: requestID, Entry: b,
 	}); err != nil {
-		slog.Warn("webhook: append log", "request", requestID, "err", err)
+		slog.WarnContext(ctx, "webhook: append log", "request", requestID, "err", err)
 	}
 }
 

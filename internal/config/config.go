@@ -43,6 +43,12 @@ type Config struct {
 	// bounds the retry policy (exponential backoff).
 	WebhookSecret      string
 	WebhookMaxAttempts int
+	// OtelServiceName is the resource service.name; OtelTracesEndpoint is
+	// the OTLP/gRPC trace collector and OtelLogsEndpoint the OTLP/HTTP
+	// logs base. All empty means exporters off (unchanged behavior).
+	OtelServiceName    string
+	OtelTracesEndpoint string
+	OtelLogsEndpoint   string
 }
 
 func Load() (Config, error) {
@@ -103,6 +109,9 @@ func Load() (Config, error) {
 		SingleDocSkipZip:   env("SINGLE_DOC_SKIP_ZIP", "0") == "1",
 		WebhookSecret:      env("WEBHOOK_SECRET", "isppr_dev_webhook"),
 		WebhookMaxAttempts: webhookMax,
+		OtelServiceName:    env("OTEL_SERVICE_NAME", "isppr"),
+		OtelTracesEndpoint: env("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+		OtelLogsEndpoint:   env("OTEL_LOGS_ENDPOINT", ""),
 	}, nil
 }
 

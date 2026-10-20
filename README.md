@@ -33,6 +33,26 @@ http://localhost:9001.
 
 (API defaults to port **8090** so it can run alongside MPEx on :8080.)
 
+## Observability
+
+The compose stack includes **Jaeger** (traces) and **Seq** (structured
+logs). The api exports only when the `OTEL_*` env vars are set — with
+them unset the process is exporter-free (noop tracer, default slog):
+
+- `OTEL_EXPORTER_OTLP_ENDPOINT` — OTLP/gRPC trace collector
+  (`jaeger:4317` in compose → UI http://localhost:16686).
+- `OTEL_LOGS_ENDPOINT` — OTLP/HTTP logs base (`http://seq:5341/ingest/otlp`
+  in compose → UI http://localhost:5341).
+- `OTEL_SERVICE_NAME` — resource `service.name` (default `isppr`).
+
+A generate request produces an ingress span (`POST /packages/generate` →
+`queue.enqueue`) and a detached worker tree `job.execute` → `doc.bind` →
+`render.batch` → `gotenberg.convert` / `zip.compress` / `storage.put`,
+with the spec's metrics block stamped as `metrics.*` span attributes.
+Webhook delivery is a separate `webhook.deliver` trace linked back to
+the job span. slog records flow to Seq via the OTLP logs pipeline
+(and stay on stderr as JSON), correlated by trace/span IDs.
+
 ## Verification
 
 ```bash

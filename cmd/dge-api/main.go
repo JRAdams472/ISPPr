@@ -15,6 +15,7 @@ import (
 	"github.com/jradams472/isppr/internal/server"
 	"github.com/jradams472/isppr/internal/storage"
 	"github.com/jradams472/isppr/internal/store"
+	"github.com/jradams472/isppr/internal/telemetry"
 )
 
 func main() {
@@ -22,6 +23,22 @@ func main() {
 	if err != nil {
 		log.Fatalf("config: %v", err)
 	}
+
+	// Exporters are environment-gated: with no endpoints configured this
+	// is an inert no-op and the process runs exactly as before.
+	otelShutdown, err := telemetry.Setup(context.Background(), telemetry.Config{
+		ServiceName:    cfg.OtelServiceName,
+		TracesEndpoint: cfg.OtelTracesEndpoint,
+		LogsEndpoint:   cfg.OtelLogsEndpoint,
+	})
+	if err != nil {
+		log.Fatalf("telemetry: %v", err)
+	}
+	defer func() {
+		shCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = otelShutdown(shCtx)
+	}()
 
 	// Migrations are append-only and applied at boot; the process refuses to
 	// serve on a schema it can't reach.

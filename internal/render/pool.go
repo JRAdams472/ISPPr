@@ -14,6 +14,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -173,6 +177,11 @@ func (p *Pool) endpoint() string {
 
 // convert does a single attempt against one endpoint.
 func (p *Pool) convert(ctx context.Context, ep, html, css string) ([]byte, error) {
+	ctx, span := otel.Tracer("isppr/render").Start(ctx, "gotenberg.convert",
+		trace.WithAttributes(
+			attribute.String("gotenberg.endpoint", ep),
+			attribute.String("http.route", "/forms/chromium/convert/html")))
+	defer span.End()
 	ctx, cancel := context.WithTimeout(ctx, p.timeout)
 	defer cancel()
 
@@ -189,6 +198,7 @@ func (p *Pool) convert(ctx context.Context, ep, html, css string) ([]byte, error
 
 	resp, err := p.http.Do(req)
 	if err != nil {
+		span.RecordError(err)
 		kind := KindPoolUnavailable
 		if errors.Is(err, context.DeadlineExceeded) ||
 			errors.Is(ctx.Err(), context.DeadlineExceeded) || isTimeout(err) {
@@ -198,6 +208,10 @@ func (p *Pool) convert(ctx context.Context, ep, html, css string) ([]byte, error
 	}
 	defer resp.Body.Close()
 
+	span.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
+	if resp.StatusCode >= 400 {
+		span.SetStatus(codes.Error, fmt.Sprintf("http %d", resp.StatusCode))
+	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		out, err := io.ReadAll(resp.Body)
 		if err != nil {
