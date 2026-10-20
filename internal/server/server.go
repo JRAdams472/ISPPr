@@ -8,6 +8,7 @@ import (
 	"github.com/jradams472/isppr/internal/config"
 	"github.com/jradams472/isppr/internal/jobs"
 	"github.com/jradams472/isppr/internal/render"
+	"github.com/jradams472/isppr/internal/storage"
 	"github.com/jradams472/isppr/internal/store"
 	"github.com/jradams472/isppr/internal/tenancy"
 	"github.com/labstack/echo/v4"
@@ -16,8 +17,9 @@ import (
 
 // New builds the Echo engine with global middleware and the scaffold routes.
 // q/pool may be nil for tests that don't touch the admin surface; rpool may
-// be nil when the variant-preview route isn't exercised.
-func New(cfg config.Config, q *store.Queries, pool *pgxpool.Pool, orch *jobs.Orchestrator, rpool *render.Pool) *echo.Echo {
+// be nil when the variant-preview route isn't exercised; st may be nil when
+// output download isn't exercised.
+func New(cfg config.Config, q *store.Queries, pool *pgxpool.Pool, orch *jobs.Orchestrator, rpool *render.Pool, st storage.Backend) *echo.Echo {
 	e := echo.New()
 	e.HideBanner = true
 	e.HidePort = true
@@ -39,7 +41,7 @@ func New(cfg config.Config, q *store.Queries, pool *pgxpool.Pool, orch *jobs.Orc
 	v1 := e.Group("/api/v1")
 	v1.GET("/status", v1Status)
 	if q != nil {
-		admin.New(q, pool, rpool).Mount(v1)
+		admin.New(q, pool, rpool, st).Mount(v1)
 		tenant := v1.Group("/packages", tenancy.Middleware(q, "generate"))
 		tenant.GET("/ping", tenantPing)
 		if orch != nil {

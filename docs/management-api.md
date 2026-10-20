@@ -106,13 +106,23 @@ GET /admin/requests?client_id&status&limit → [request, …]
 GET /admin/requests/{id} →
 {"id":"req_…","client_id","customer_id","package_name","status",
  "error"?,"metrics"?,"webhook_status":"NONE|PENDING|DELIVERED|EXHAUSTED",
- "webhook_log":[{"at":"…","attempt":1,"code":200}],"created_at"}
+ "webhook_log":[{"at":"…","attempt":1,"code":200}],"created_at",
+ "results"?:{"output_type":"ZIP|PDF","filename":"….zip",
+            "download_url":"<fresh presigned URL>"}}
+GET /admin/requests/{id}/download → 302 | application/zip | application/pdf | 404 | 409
 ```
 
 `GET /admin/requests` lists requests newest-first; `client_id` and
 `status` are optional filters, `limit` caps the page (1–500, default all).
 Cross-tenant ops view of a generation request, including webhook
 delivery status and the per-attempt log (MPE-37).
+
+The detail view carries `results` only for COMPLETED rows with a stored
+artifact (MPE-43): `download_url` is a fresh presigned URL under S3/MinIO
+(never persisted — every read signs anew within the TTL), or the
+`/download` route under the local dev backend. `/download` streams the
+artifact directly (or 302-redirects to a fresh presigned URL under S3)
+and 409s while the request is not COMPLETED.
 
 ### Usage (dashboard)
 

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/jradams472/isppr/internal/config"
 	"github.com/jradams472/isppr/internal/render"
 	"github.com/jradams472/isppr/internal/server"
+	"github.com/jradams472/isppr/internal/storage"
 	"github.com/jradams472/isppr/internal/store"
 	"github.com/labstack/echo/v4"
 	"golang.org/x/crypto/bcrypt"
@@ -30,7 +32,7 @@ func sha256hex(s string) string {
 
 // Request-level coverage for the whole /api/v1/admin surface. Runs against
 // real Postgres (compose db locally, service container in CI).
-func testServer(t *testing.T, rpool *render.Pool) (*echo.Echo, *store.Queries, *pgxpool.Pool) {
+func testServer(t *testing.T, rpool *render.Pool) (*echo.Echo, *store.Queries, *pgxpool.Pool, string) {
 	t.Helper()
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
@@ -44,8 +46,9 @@ func testServer(t *testing.T, rpool *render.Pool) (*echo.Echo, *store.Queries, *
 		t.Skipf("postgres unavailable (%v) — start via docker compose up db", err)
 	}
 	t.Cleanup(pool.Close)
+	dir := t.TempDir()
 	return server.New(config.Config{CORSOrigin: "http://localhost:3100"},
-		store.New(pool), pool, nil, rpool), store.New(pool), pool
+		store.New(pool), pool, nil, rpool, &storage.LocalStore{Dir: dir}), store.New(pool), pool, dir
 }
 
 func do(t *testing.T, e *echo.Echo, method, path, body, token string) (int, map[string]any) {
@@ -84,7 +87,7 @@ func doList(t *testing.T, e *echo.Echo, path, token string) (int, []map[string]a
 }
 
 func TestAdminAPI(t *testing.T) {
-	e, q, pool := testServer(t, nil)
+	e, q, pool, storeDir := testServer(t, nil)
 	ctx := context.Background()
 
 	// Seed an admin user to log in with (unique email per run — the dev DB
@@ -314,6 +317,51 @@ func TestAdminAPI(t *testing.T) {
 		t.Fatalf("limit: %d rows=%d", code, len(reqs))
 	}
 
+	// --- request detail + re-download: a COMPLETED row with a stored
+	// artifact gets a results block and a working admin download route.
+	outID := "gr_out_" + sfx
+	outKey := "req/" + outID + "/pkg.zip"
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO generation_requests (id, client_id, customer_id, package_name, status, metrics, output_key)
+		 VALUES ($1, $2, $3, 'pkg', 'COMPLETED', '{"total_duration_ms": 12}', $4)`,
+		outID, cliID, custID, outKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(storeDir, "req", outID), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(storeDir, outKey), []byte("zip-bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, det := do(t, e, http.MethodGet, "/api/v1/admin/requests/"+outID, "", tok)
+	if code != 200 {
+		t.Fatalf("request detail: %d", code)
+	}
+	res, ok := det["results"].(map[string]any)
+	if !ok || res["output_type"] != "ZIP" || res["filename"] != "pkg.zip" {
+		t.Fatalf("results block: %+v", det["results"])
+	}
+	if res["download_url"] != "/api/v1/admin/requests/"+outID+"/download" {
+		t.Fatalf("download_url: %v", res["download_url"])
+	}
+	// LocalStore: the admin download route streams the artifact.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/requests/"+outID+"/download", nil)
+	req.Header.Set(echo.HeaderAuthorization, "Bearer "+tok)
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != 200 || rec.Body.String() != "zip-bytes" || rec.Header().Get("Content-Type") != "application/zip" {
+		t.Fatalf("download: %d %q %q", rec.Code, rec.Body.String(), rec.Header().Get("Content-Type"))
+	}
+	// Non-completed rows carry no results block and 409 on download.
+	failID := fmt.Sprintf("gr_t1_%s", sfx)
+	code, det = do(t, e, http.MethodGet, "/api/v1/admin/requests/"+failID, "", tok)
+	if code != 200 || det["results"] != nil {
+		t.Fatalf("failed-request detail should have no results: %+v", det["results"])
+	}
+	if code, _ := do(t, e, http.MethodGet, "/api/v1/admin/requests/"+failID+"/download", "", tok); code != http.StatusConflict {
+		t.Fatalf("download on non-completed: got %d, want 409", code)
+	}
+
 	// --- logout kills the session
 	if code, _ := do(t, e, http.MethodPost, "/api/v1/admin/logout", "", tok); code != http.StatusNoContent {
 		t.Fatalf("logout: %d", code)
@@ -324,7 +372,7 @@ func TestAdminAPI(t *testing.T) {
 }
 
 func TestAdminRoleGate(t *testing.T) {
-	e, q, _ := testServer(t, nil)
+	e, q, _, _ := testServer(t, nil)
 	ctx := context.Background()
 
 	// A viewer can log in and read, but writes are 403 — roles gate
@@ -372,7 +420,7 @@ func TestVariantPreview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, q, _ := testServer(t, rpool)
+	e, q, _, _ := testServer(t, rpool)
 	ctx := context.Background()
 
 	sfx := fmt.Sprintf("%d", rand.Int63())

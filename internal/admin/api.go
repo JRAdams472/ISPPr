@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jradams472/isppr/internal/render"
+	"github.com/jradams472/isppr/internal/storage"
 	"github.com/jradams472/isppr/internal/store"
 	"github.com/labstack/echo/v4"
 )
@@ -21,6 +22,7 @@ type API struct {
 	q     *store.Queries
 	pool  *pgxpool.Pool
 	rpool *render.Pool
+	store storage.Backend
 	ttl   time.Duration
 }
 
@@ -29,8 +31,10 @@ const (
 	sessionTTL    = 12 * time.Hour
 )
 
-func New(q *store.Queries, pool *pgxpool.Pool, rpool *render.Pool) *API {
-	return &API{q: q, pool: pool, rpool: rpool, ttl: sessionTTL}
+// st may be nil in tests that don't exercise output download — the request
+// detail then reports no results block and the download route 503s.
+func New(q *store.Queries, pool *pgxpool.Pool, rpool *render.Pool, st storage.Backend) *API {
+	return &API{q: q, pool: pool, rpool: rpool, store: st, ttl: sessionTTL}
 }
 
 // Mount wires the admin routes onto the versioned group. Login is public;
@@ -69,6 +73,7 @@ func (a *API) Mount(v1 *echo.Group) {
 
 	g.GET("/requests", a.listRequests)
 	g.GET("/requests/:id", a.getRequest)
+	g.GET("/requests/:id/download", a.downloadRequestOutput)
 	g.GET("/usage", a.usage)
 }
 
