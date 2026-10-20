@@ -12,7 +12,10 @@ JOIN api_keys k ON k.client_id = c.id
 WHERE k.key_hash = $1 AND k.revoked_at IS NULL;
 
 -- name: ListClients :many
-SELECT * FROM clients ORDER BY created_at;
+SELECT c.*,
+       (SELECT count(*) FROM customers cu WHERE cu.client_id = c.id) AS customers,
+       (SELECT count(*) FROM api_keys k WHERE k.client_id = c.id AND k.revoked_at IS NULL) AS active_keys
+FROM clients c ORDER BY c.created_at;
 
 -- name: SetClientStatus :one
 UPDATE clients SET status = $2 WHERE id = $1

@@ -233,16 +233,19 @@ func TestAdminAPI(t *testing.T) {
 		t.Fatalf("revoke: %d %+v", code, kv)
 	}
 
-	// --- usage: seed two request rows, verify aggregation shape.
+	// --- usage + requests list: seed two request rows, verify aggregation
+	// shape and the filtered list surface.
 	for i, row := range []struct{ status, ms string }{
 		{"COMPLETED", "10"}, {"FAILED", "40"},
 	} {
 		if _, err := pool.Exec(ctx,
-			`INSERT INTO generation_requests (id, client_id, customer_id, package_name, status, metrics)
-			 VALUES ($1, $2, $3, 'pkg', $4, $5::jsonb)
+			`INSERT INTO generation_requests (id, client_id, customer_id, package_name, status, error, metrics)
+			 VALUES ($1, $2, $3, 'pkg', $4,
+			         CASE WHEN $4 = 'FAILED' THEN 'render blew up' ELSE NULL END,
+			         $5::jsonb)
 			 ON CONFLICT (id) DO NOTHING`,
 			fmt.Sprintf("gr_t%d_%s", i, sfx), cliID, custID, row.status,
-			`{"latency_ms": `+row.ms+`}`); err != nil {
+			`{"total_duration_ms": `+row.ms+`}`); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -251,9 +254,10 @@ func TestAdminAPI(t *testing.T) {
 		t.Fatalf("usage: %d", code)
 	}
 	lat := u["latency"].(map[string]any)
-	// Aggregates span all clients — earlier test runs contribute samples, so
-	// assert shape + our two points are inside the percentile range.
-	if lat["samples"].(float64) < 2 || lat["p50_ms"].(float64) < 10 || lat["p95_ms"].(float64) > 40 {
+	// Aggregates span all clients — earlier test runs and the dev stack's
+	// real renders contribute samples at arbitrary durations, so only the
+	// shape and a nonzero sample count are contract here.
+	if lat["samples"].(float64) < 2 || lat["p50_ms"].(float64) < 0 || lat["p95_ms"].(float64) < lat["p50_ms"].(float64) {
 		t.Fatalf("usage latency: %+v", lat)
 	}
 	days := u["by_day"].([]any)
@@ -266,6 +270,46 @@ func TestAdminAPI(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("usage by_day missing seeded rows: %+v", days)
+	}
+
+	// Per-client usage: samples must be exactly our two rows (other test
+	// runs contribute other clients only).
+	code, cu := do(t, e, http.MethodGet, "/api/v1/admin/usage?days=1&client_id="+cliID, "", tok)
+	if code != 200 {
+		t.Fatalf("client usage: %d", code)
+	}
+	clat := cu["latency"].(map[string]any)
+	if clat["samples"].(float64) != 2 || clat["p50_ms"].(float64) < 10 || clat["p95_ms"].(float64) > 40 {
+		t.Fatalf("client usage latency: %+v", clat)
+	}
+	for _, d := range cu["by_day"].([]any) {
+		if d.(map[string]any)["client_id"] != cliID {
+			t.Fatalf("client-filtered by_day leaked another client: %+v", d)
+		}
+	}
+
+	// --- requests list: client/status filters isolate the seeded pair.
+	code, reqs := doList(t, e, "/api/v1/admin/requests?client_id="+cliID, tok)
+	if code != 200 || len(reqs) != 2 {
+		t.Fatalf("requests by client: %d rows=%d", code, len(reqs))
+	}
+	code, reqs = doList(t, e, "/api/v1/admin/requests?client_id="+cliID+"&status=FAILED", tok)
+	if code != 200 || len(reqs) != 1 || reqs[0]["status"] != "FAILED" {
+		t.Fatalf("requests failed filter: %d %+v", code, reqs)
+	}
+	if reqs[0]["error"] != "render blew up" || reqs[0]["webhook_status"] == nil {
+		t.Fatalf("failed request row shape: %+v", reqs[0])
+	}
+	code, reqs = doList(t, e, "/api/v1/admin/requests?client_id=nope", tok)
+	if code != 200 || len(reqs) != 0 {
+		t.Fatalf("unknown client filter: %d rows=%d", code, len(reqs))
+	}
+	if code, _ := do(t, e, http.MethodGet, "/api/v1/admin/requests?limit=0", "", tok); code != http.StatusBadRequest {
+		t.Fatalf("bad limit: got %d, want 400", code)
+	}
+	code, reqs = doList(t, e, "/api/v1/admin/requests?client_id="+cliID+"&limit=1", tok)
+	if code != 200 || len(reqs) != 1 {
+		t.Fatalf("limit: %d rows=%d", code, len(reqs))
 	}
 
 	// --- logout kills the session

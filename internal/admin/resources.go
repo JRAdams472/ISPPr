@@ -13,10 +13,12 @@ import (
 // --- DTOs: response shapes never leak secret material (key/password hashes).
 
 type clientOut struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
+	ID         string    `json:"id"`
+	Name       string    `json:"name"`
+	Status     string    `json:"status"`
+	CreatedAt  time.Time `json:"created_at"`
+	Customers  int64     `json:"customers,omitempty"`
+	ActiveKeys int64     `json:"active_keys,omitempty"`
 }
 
 func clientDTO(c store.Client) clientOut {
@@ -98,7 +100,10 @@ func (a *API) listClients(c echo.Context) error {
 	}
 	out := make([]clientOut, len(rows))
 	for i, r := range rows {
-		out[i] = clientDTO(r)
+		out[i] = clientOut{
+			ID: r.ID, Name: r.Name, Status: r.Status, CreatedAt: r.CreatedAt.Time,
+			Customers: r.Customers, ActiveKeys: r.ActiveKeys,
+		}
 	}
 	return c.JSON(http.StatusOK, out)
 }

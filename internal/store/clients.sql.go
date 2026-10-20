@@ -70,23 +70,37 @@ func (q *Queries) GetClientByAPIKeyHash(ctx context.Context, keyHash string) (Cl
 }
 
 const listClients = `-- name: ListClients :many
-SELECT id, name, status, created_at FROM clients ORDER BY created_at
+SELECT c.id, c.name, c.status, c.created_at,
+       (SELECT count(*) FROM customers cu WHERE cu.client_id = c.id) AS customers,
+       (SELECT count(*) FROM api_keys k WHERE k.client_id = c.id AND k.revoked_at IS NULL) AS active_keys
+FROM clients c ORDER BY c.created_at
 `
 
-func (q *Queries) ListClients(ctx context.Context) ([]Client, error) {
+type ListClientsRow struct {
+	ID         string             `json:"id"`
+	Name       string             `json:"name"`
+	Status     string             `json:"status"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	Customers  int64              `json:"customers"`
+	ActiveKeys int64              `json:"active_keys"`
+}
+
+func (q *Queries) ListClients(ctx context.Context) ([]ListClientsRow, error) {
 	rows, err := q.db.Query(ctx, listClients)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Client
+	var items []ListClientsRow
 	for rows.Next() {
-		var i Client
+		var i ListClientsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Name,
 			&i.Status,
 			&i.CreatedAt,
+			&i.Customers,
+			&i.ActiveKeys,
 		); err != nil {
 			return nil, err
 		}

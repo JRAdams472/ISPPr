@@ -61,13 +61,68 @@ func (q *Queries) UsageByDay(ctx context.Context, days int32) ([]UsageByDayRow, 
 	return items, nil
 }
 
+const usageByDayForClient = `-- name: UsageByDayForClient :many
+SELECT date_trunc('day', created_at)::date AS day,
+       client_id,
+       customer_id,
+       count(*) AS requests,
+       count(*) FILTER (WHERE status = 'COMPLETED') AS completed,
+       count(*) FILTER (WHERE status = 'FAILED') AS failed
+FROM generation_requests
+WHERE created_at >= now() - make_interval(days => $1)
+  AND client_id = $2
+GROUP BY 1, 2, 3
+ORDER BY 1 DESC, 2, 3
+`
+
+type UsageByDayForClientParams struct {
+	Days     int32  `json:"days"`
+	ClientID string `json:"client_id"`
+}
+
+type UsageByDayForClientRow struct {
+	Day        pgtype.Date `json:"day"`
+	ClientID   string      `json:"client_id"`
+	CustomerID string      `json:"customer_id"`
+	Requests   int64       `json:"requests"`
+	Completed  int64       `json:"completed"`
+	Failed     int64       `json:"failed"`
+}
+
+func (q *Queries) UsageByDayForClient(ctx context.Context, arg UsageByDayForClientParams) ([]UsageByDayForClientRow, error) {
+	rows, err := q.db.Query(ctx, usageByDayForClient, arg.Days, arg.ClientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []UsageByDayForClientRow
+	for rows.Next() {
+		var i UsageByDayForClientRow
+		if err := rows.Scan(
+			&i.Day,
+			&i.ClientID,
+			&i.CustomerID,
+			&i.Requests,
+			&i.Completed,
+			&i.Failed,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const usageLatency = `-- name: UsageLatency :one
-SELECT coalesce(percentile_cont(0.5) WITHIN GROUP (ORDER BY (metrics->>'latency_ms')::float8), 0)::float8 AS p50_ms,
-       coalesce(percentile_cont(0.95) WITHIN GROUP (ORDER BY (metrics->>'latency_ms')::float8), 0)::float8 AS p95_ms,
+SELECT coalesce(percentile_cont(0.5) WITHIN GROUP (ORDER BY (metrics->>'total_duration_ms')::float8), 0)::float8 AS p50_ms,
+       coalesce(percentile_cont(0.95) WITHIN GROUP (ORDER BY (metrics->>'total_duration_ms')::float8), 0)::float8 AS p95_ms,
        count(*) AS samples
 FROM generation_requests
 WHERE created_at >= now() - make_interval(days => $1)
-  AND metrics ? 'latency_ms'
+  AND metrics ? 'total_duration_ms'
 `
 
 type UsageLatencyRow struct {
@@ -79,6 +134,34 @@ type UsageLatencyRow struct {
 func (q *Queries) UsageLatency(ctx context.Context, days int32) (UsageLatencyRow, error) {
 	row := q.db.QueryRow(ctx, usageLatency, days)
 	var i UsageLatencyRow
+	err := row.Scan(&i.P50Ms, &i.P95Ms, &i.Samples)
+	return i, err
+}
+
+const usageLatencyForClient = `-- name: UsageLatencyForClient :one
+SELECT coalesce(percentile_cont(0.5) WITHIN GROUP (ORDER BY (metrics->>'total_duration_ms')::float8), 0)::float8 AS p50_ms,
+       coalesce(percentile_cont(0.95) WITHIN GROUP (ORDER BY (metrics->>'total_duration_ms')::float8), 0)::float8 AS p95_ms,
+       count(*) AS samples
+FROM generation_requests
+WHERE created_at >= now() - make_interval(days => $1)
+  AND client_id = $2
+  AND metrics ? 'total_duration_ms'
+`
+
+type UsageLatencyForClientParams struct {
+	Days     int32  `json:"days"`
+	ClientID string `json:"client_id"`
+}
+
+type UsageLatencyForClientRow struct {
+	P50Ms   float64 `json:"p50_ms"`
+	P95Ms   float64 `json:"p95_ms"`
+	Samples int64   `json:"samples"`
+}
+
+func (q *Queries) UsageLatencyForClient(ctx context.Context, arg UsageLatencyForClientParams) (UsageLatencyForClientRow, error) {
+	row := q.db.QueryRow(ctx, usageLatencyForClient, arg.Days, arg.ClientID)
+	var i UsageLatencyForClientRow
 	err := row.Scan(&i.P50Ms, &i.P95Ms, &i.Samples)
 	return i, err
 }

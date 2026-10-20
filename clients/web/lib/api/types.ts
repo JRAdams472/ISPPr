@@ -20,6 +20,9 @@ export interface Client {
   status: string;
   created_at: string;
   updated_at: string;
+  /** Present on list responses only. */
+  customers?: number;
+  active_keys?: number;
 }
 
 export interface Customer {

@@ -94,9 +94,20 @@ export const variants = {
 };
 
 export const requests = {
+  list: (params: { client_id?: string; status?: string; limit?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (params.client_id) q.set("client_id", params.client_id);
+    if (params.status) q.set("status", params.status);
+    if (params.limit) q.set("limit", String(params.limit));
+    const s = q.toString();
+    return get<RequestView[]>(`${A}/requests${s ? `?${s}` : ""}`);
+  },
   get: (id: string) => get<RequestView>(`${A}/requests/${id}`),
 };
 
 export const usage = {
-  get: (days = 7) => get<Usage>(`${A}/usage?days=${days}`),
+  get: (days = 7, clientId?: string) =>
+    get<Usage>(
+      `${A}/usage?days=${days}${clientId ? `&client_id=${encodeURIComponent(clientId)}` : ""}`,
+    ),
 };

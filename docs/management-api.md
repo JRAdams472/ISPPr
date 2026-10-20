@@ -94,26 +94,30 @@ GET /admin/customers/:id/variants                                  → [variant]
 ### Requests (ops view)
 
 ```http
+GET /admin/requests?client_id&status&limit → [request, …]
 GET /admin/requests/{id} →
 {"id":"req_…","client_id","customer_id","package_name","status",
  "error"?,"metrics"?,"webhook_status":"NONE|PENDING|DELIVERED|EXHAUSTED",
  "webhook_log":[{"at":"…","attempt":1,"code":200}],"created_at"}
 ```
 
+`GET /admin/requests` lists requests newest-first; `client_id` and
+`status` are optional filters, `limit` caps the page (1–500, default all).
 Cross-tenant ops view of a generation request, including webhook
 delivery status and the per-attempt log (MPE-37).
 
 ### Usage (dashboard)
 
 ```http
-GET /admin/usage?days=30 →
+GET /admin/usage?days=30[&client_id=cli_…] →
 {"days":30,
  "by_day":[{"day":"YYYY-MM-DD","client_id","customer_id","requests","completed","failed"}],
  "latency":{"p50_ms":0,"p95_ms":0,"samples":0}}
 ```
 
 Aggregates `generation_requests`; `latency` percentiles interpolate over
-`metrics.latency_ms` (0/0/0 until the render pipeline emits metrics).
+`metrics.total_duration_ms` (0/0/0 until the render pipeline emits
+metrics). `client_id` scopes both aggregates to a single client.
 
 ## Error shape
 

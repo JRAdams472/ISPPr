@@ -4,12 +4,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Providers } from "../app/providers";
 import {
   keys,
+  useApiKeys,
   useClient,
   useClients,
   useCustomers,
   useLogin,
   useMasters,
   useMe,
+  useRequests,
   useRequestView,
   useUsage,
 } from "../lib/queries";
@@ -50,13 +52,35 @@ describe("queries", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("useUsage passes the window", async () => {
+  it("useUsage passes the window and client filter", async () => {
     const fetchMock = ok({ days: 14, by_day: [], latency: {} });
     vi.stubGlobal("fetch", fetchMock);
-    const { result } = renderHook(() => useUsage(14), { wrapper });
+    const { result } = renderHook(() => useUsage(14, "cli_1"), { wrapper });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     const [url] = fetchMock.mock.calls[0] as unknown as [string];
     expect(url).toContain("days=14");
+    expect(url).toContain("client_id=cli_1");
+  });
+
+  it("useApiKeys and useRequests fetch their lists", async () => {
+    const fetchMock = ok([]);
+    vi.stubGlobal("fetch", fetchMock);
+    const k = renderHook(() => useApiKeys("cli_1"), { wrapper });
+    const r = renderHook(
+      () => useRequests({ client_id: "cli_1", status: "FAILED", limit: 5 }),
+      { wrapper },
+    );
+    await waitFor(() => expect(k.result.current.isSuccess).toBe(true));
+    await waitFor(() => expect(r.result.current.isSuccess).toBe(true));
+    const urls = fetchMock.mock.calls.map(
+      (x) => (x as unknown as [string])[0],
+    );
+    expect(urls).toContain(
+      "http://localhost:8090/api/v1/admin/clients/cli_1/api-keys",
+    );
+    expect(urls).toContain(
+      "http://localhost:8090/api/v1/admin/requests?client_id=cli_1&status=FAILED&limit=5",
+    );
   });
 
   it("useLogin posts credentials", async () => {
@@ -111,6 +135,12 @@ describe("queries", () => {
     expect(keys.clients).toEqual(["clients"]);
     expect(keys.customers("c1")).toEqual(["clients", "c1", "customers"]);
     expect(keys.request("r1")).toEqual(["requests", "r1"]);
-    expect(keys.usage(7)).toEqual(["usage", 7]);
+    expect(keys.requests({ client_id: "c1" })).toEqual([
+      "requests",
+      "list",
+      { client_id: "c1" },
+    ]);
+    expect(keys.usage(7)).toEqual(["usage", 7, ""]);
+    expect(keys.usage(7, "c1")).toEqual(["usage", 7, "c1"]);
   });
 });

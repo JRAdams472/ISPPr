@@ -16,7 +16,10 @@ export const keys = {
   variants: (customerId: string) =>
     ["customers", customerId, "variants"] as const,
   request: (id: string) => ["requests", id] as const,
-  usage: (days: number) => ["usage", days] as const,
+  requests: (filter: { client_id?: string; status?: string; limit?: number }) =>
+    ["requests", "list", filter] as const,
+  usage: (days: number, clientId?: string) =>
+    ["usage", days, clientId ?? ""] as const,
 };
 
 export const useMe = (enabled = true) =>
@@ -46,6 +49,13 @@ export const useMasters = (clientId: string) =>
     enabled: Boolean(clientId),
   });
 
+export const useApiKeys = (clientId: string) =>
+  useQuery({
+    queryKey: keys.apiKeys(clientId),
+    queryFn: () => api.apiKeys.list(clientId),
+    enabled: Boolean(clientId),
+  });
+
 export const useRequestView = (id: string) =>
   useQuery({
     queryKey: keys.request(id),
@@ -53,8 +63,19 @@ export const useRequestView = (id: string) =>
     enabled: Boolean(id),
   });
 
-export const useUsage = (days = 7) =>
-  useQuery({ queryKey: keys.usage(days), queryFn: () => api.usage.get(days) });
+export const useRequests = (
+  filter: { client_id?: string; status?: string; limit?: number } = {},
+) =>
+  useQuery({
+    queryKey: keys.requests(filter),
+    queryFn: () => api.requests.list(filter),
+  });
+
+export const useUsage = (days = 7, clientId?: string) =>
+  useQuery({
+    queryKey: keys.usage(days, clientId),
+    queryFn: () => api.usage.get(days, clientId),
+  });
 
 export const useLogin = () =>
   useMutation({

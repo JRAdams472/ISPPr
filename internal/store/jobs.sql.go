@@ -291,6 +291,53 @@ func (q *Queries) GetRequestForClient(ctx context.Context, arg GetRequestForClie
 	return i, err
 }
 
+const listRequestsFiltered = `-- name: ListRequestsFiltered :many
+SELECT id, client_id, customer_id, idempotency_key, package_name, status, metrics, output_key, error, created_at, webhook_status, webhook_log FROM generation_requests
+WHERE ($1::text IS NULL OR client_id = $1)
+  AND ($2::text IS NULL OR status = $2)
+ORDER BY created_at DESC
+LIMIT $3
+`
+
+type ListRequestsFilteredParams struct {
+	ClientID pgtype.Text `json:"client_id"`
+	Status   pgtype.Text `json:"status"`
+	Limit    pgtype.Int4 `json:"limit"`
+}
+
+func (q *Queries) ListRequestsFiltered(ctx context.Context, arg ListRequestsFilteredParams) ([]GenerationRequest, error) {
+	rows, err := q.db.Query(ctx, listRequestsFiltered, arg.ClientID, arg.Status, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GenerationRequest
+	for rows.Next() {
+		var i GenerationRequest
+		if err := rows.Scan(
+			&i.ID,
+			&i.ClientID,
+			&i.CustomerID,
+			&i.IdempotencyKey,
+			&i.PackageName,
+			&i.Status,
+			&i.Metrics,
+			&i.OutputKey,
+			&i.Error,
+			&i.CreatedAt,
+			&i.WebhookStatus,
+			&i.WebhookLog,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const requeueJob = `-- name: RequeueJob :exec
 UPDATE generation_jobs SET status = 'QUEUED', error = $2 WHERE id = $1
 `
