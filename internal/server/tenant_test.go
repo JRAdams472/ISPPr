@@ -6,11 +6,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jradams472/isppr/internal/config"
@@ -23,11 +23,10 @@ import (
 // Request-level coverage for the X-API-Key tenant surface. Runs against
 // real Postgres (compose db locally, service container in CI).
 
-var tenantSeq int64
-
+// tid mints unique fixture IDs — a random suffix so reruns against the
+// persisted dev DB (and parallel package binaries) can't collide.
 func tid(prefix string) string {
-	tenantSeq++
-	return fmt.Sprintf("%s_t%d_%d", prefix, time.Now().UnixNano()%1e6, tenantSeq)
+	return fmt.Sprintf("%s_t%d", prefix, rand.Int63())
 }
 
 func sha256hex(s string) string {
@@ -50,7 +49,7 @@ func testEnv(t *testing.T) (*echo.Echo, *store.Queries) {
 	}
 	t.Cleanup(pool.Close)
 	return server.New(config.Config{CORSOrigin: "http://localhost:3100"},
-		store.New(pool), pool, nil, nil), store.New(pool)
+		store.New(pool), pool, nil, nil, nil), store.New(pool)
 }
 
 // tenantFixture builds two tenants each owning a customer, a template master,

@@ -76,7 +76,7 @@ func main() {
 		jobs.WithWebhook(cfg.WebhookSecret, cfg.WebhookMaxAttempts))
 	go orch.Start(context.Background())
 
-	e := server.New(cfg, store.New(pool), pool, orch, rpool)
+	e := server.New(cfg, store.New(pool), pool, orch, rpool, backend)
 
 	go func() {
 		if err := e.Start(":" + cfg.Port); err != nil && !errors.Is(err, http.ErrServerClosed) {

@@ -75,6 +75,22 @@ export interface TemplateVariant {
   updated_at: string;
 }
 
+/** Egress metrics block recorded on completed requests (durations in ms). */
+export interface RequestMetrics {
+  total_documents: number;
+  parsing_duration_ms: number;
+  rendering_duration_ms: number;
+  compression_duration_ms: number;
+  total_duration_ms: number;
+}
+
+/** Present on the request detail view for COMPLETED rows with stored output. */
+export interface RequestResults {
+  output_type: "ZIP" | "PDF";
+  filename: string;
+  download_url: string;
+}
+
 export interface RequestView {
   id: string;
   client_id: string;
@@ -82,7 +98,8 @@ export interface RequestView {
   package_name: string;
   status: string;
   error?: string;
-  metrics?: Record<string, unknown>;
+  metrics?: RequestMetrics;
+  results?: RequestResults;
   webhook_status: "NONE" | "PENDING" | "DELIVERED" | "EXHAUSTED";
   webhook_log: { at: string; attempt: number; code?: number; error?: string }[];
   created_at: string;

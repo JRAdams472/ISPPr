@@ -53,3 +53,15 @@ export const BanIcon = () => (
     <path d="M4.2 11.8l7.6-7.6" />
   </Icon>
 );
+
+export const DownloadIcon = () => (
+  <Icon>
+    <path d="M8 2.5v7M5 6.5l3 3 3-3M3.5 12.5v1a1.5 1.5 0 0 0 1.5 1.5h6a1.5 1.5 0 0 0 1.5-1.5v-1" />
+  </Icon>
+);
+
+export const BackIcon = () => (
+  <Icon>
+    <path d="M9.5 3.5L5 8l4.5 4.5M5.5 8h7" />
+  </Icon>
+);

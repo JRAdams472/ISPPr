@@ -141,7 +141,7 @@ func newEnvHandler(t *testing.T, h http.HandlerFunc, budget time.Duration,
 	t.Cleanup(cancel)
 	go orch.Start(ctx)
 
-	e := server.New(config.Config{}, store.New(pool), pool, orch, rpool)
+	e := server.New(config.Config{}, store.New(pool), pool, orch, rpool, backend)
 	return &env{e: e, q: store.New(pool), dir: dir}
 }
 
