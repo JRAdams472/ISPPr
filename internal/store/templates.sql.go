@@ -7,6 +7,8 @@ package store
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createTemplateMaster = `-- name: CreateTemplateMaster :one
@@ -188,20 +190,31 @@ func (q *Queries) ListMasters(ctx context.Context, clientID string) ([]TemplateM
 }
 
 const listVariantsForCustomer = `-- name: ListVariantsForCustomer :many
-SELECT id, master_id, customer_id, overlay, created_at, updated_at FROM template_variants
-WHERE customer_id = $1
-ORDER BY created_at
+SELECT v.id, v.master_id, v.customer_id, v.overlay, v.created_at, v.updated_at, m.name AS master_name FROM template_variants v
+JOIN template_masters m ON m.id = v.master_id
+WHERE v.customer_id = $1
+ORDER BY v.created_at
 `
 
-func (q *Queries) ListVariantsForCustomer(ctx context.Context, customerID string) ([]TemplateVariant, error) {
+type ListVariantsForCustomerRow struct {
+	ID         string             `json:"id"`
+	MasterID   string             `json:"master_id"`
+	CustomerID string             `json:"customer_id"`
+	Overlay    []byte             `json:"overlay"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+	MasterName string             `json:"master_name"`
+}
+
+func (q *Queries) ListVariantsForCustomer(ctx context.Context, customerID string) ([]ListVariantsForCustomerRow, error) {
 	rows, err := q.db.Query(ctx, listVariantsForCustomer, customerID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []TemplateVariant
+	var items []ListVariantsForCustomerRow
 	for rows.Next() {
-		var i TemplateVariant
+		var i ListVariantsForCustomerRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.MasterID,
@@ -209,6 +222,7 @@ func (q *Queries) ListVariantsForCustomer(ctx context.Context, customerID string
 			&i.Overlay,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.MasterName,
 		); err != nil {
 			return nil, err
 		}

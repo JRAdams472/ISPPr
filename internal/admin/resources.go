@@ -65,6 +65,7 @@ func masterDTO(m store.TemplateMaster) masterOut {
 type variantOut struct {
 	ID         string          `json:"id"`
 	MasterID   string          `json:"master_id"`
+	MasterName string          `json:"master_name,omitempty"`
 	CustomerID string          `json:"customer_id"`
 	Overlay    json.RawMessage `json:"overlay"`
 	UpdatedAt  time.Time       `json:"updated_at"`

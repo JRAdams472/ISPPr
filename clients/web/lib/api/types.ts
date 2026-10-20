@@ -68,6 +68,8 @@ export interface VariantOverlay {
 export interface TemplateVariant {
   id: string;
   master_id: string;
+  /** Present on customer-variant list responses only. */
+  master_name?: string;
   customer_id: string;
   overlay: VariantOverlay;
   updated_at: string;

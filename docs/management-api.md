@@ -86,10 +86,18 @@ version row; merge semantics in `docs/template-resolution.md`.
 PUT /admin/template-variants {"master_id","customer_id","overlay"?} → variant (upsert)
 GET /admin/template-variants?master_id=…&customer_id=…             → variant | 404
 GET /admin/customers/:id/variants                                  → [variant]
+POST /admin/template-variants/preview {"master_id","overlay"?,"data"?}
+                                                                 → application/pdf | 400 | 404
 ```
 
 `variant` = `{id:"var_…", master_id, customer_id, overlay:{"css_patch"?,
 "toggles"?,"branding"?}, updated_at}`
+
+`/preview` resolves the master plus the *draft* overlay in memory (same
+base ← master ← overlay chain generation uses), renders `data` through the
+Handlebars surface, and returns the Gotenberg PDF. Nothing is persisted —
+safe for draft editing; available to any authenticated session (readers
+included).
 
 ### Requests (ops view)
 

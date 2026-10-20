@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jradams472/isppr/internal/render"
 	"github.com/jradams472/isppr/internal/store"
 	"github.com/labstack/echo/v4"
 )
@@ -17,9 +18,10 @@ import (
 // API is the management surface: portal-session-gated CRUD under
 // /api/v1/admin — distinct from the tenant X-API-Key generation surface.
 type API struct {
-	q    *store.Queries
-	pool *pgxpool.Pool
-	ttl  time.Duration
+	q     *store.Queries
+	pool  *pgxpool.Pool
+	rpool *render.Pool
+	ttl   time.Duration
 }
 
 const (
@@ -27,8 +29,8 @@ const (
 	sessionTTL    = 12 * time.Hour
 )
 
-func New(q *store.Queries, pool *pgxpool.Pool) *API {
-	return &API{q: q, pool: pool, ttl: sessionTTL}
+func New(q *store.Queries, pool *pgxpool.Pool, rpool *render.Pool) *API {
+	return &API{q: q, pool: pool, rpool: rpool, ttl: sessionTTL}
 }
 
 // Mount wires the admin routes onto the versioned group. Login is public;
@@ -62,6 +64,7 @@ func (a *API) Mount(v1 *echo.Group) {
 
 	g.PUT("/template-variants", a.upsertVariant, a.requireWrite)
 	g.GET("/template-variants", a.getVariant)
+	g.POST("/template-variants/preview", a.previewVariant)
 	g.GET("/customers/:id/variants", a.listCustomerVariants)
 
 	g.GET("/requests", a.listRequests)
