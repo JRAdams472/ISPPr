@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { ApiError, getToken, setToken } from "@/lib/api/client";
 import { useMe } from "@/lib/queries";
 
@@ -9,22 +9,27 @@ import { useMe } from "@/lib/queries";
 // to /login; a stored-but-dead session (401 from /me) is cleared first.
 //
 // localStorage must not be read during render — SSR has no window, so the
-// server and the first client paint would disagree (hydration error). The
-// token check runs in an effect after mount; both sides render the same
-// pending state first.
+// server and the first client paint would disagree (hydration error).
+// useSyncExternalStore keeps both sides on the server snapshot first, then
+// re-reads the real token after hydration without a setState-in-effect.
+
+const subscribe = () => () => {};
+const onClient = () => true;
+const onServer = () => false;
 
 export function RequireAuth({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const [hasToken, setHasToken] = useState(false);
-  const [checked, setChecked] = useState(false);
+  const checked = useSyncExternalStore(subscribe, onClient, onServer);
+  const hasToken = useSyncExternalStore(
+    subscribe,
+    () => getToken() !== "",
+    onServer,
+  );
   const me = useMe(hasToken);
 
   useEffect(() => {
-    const present = getToken() !== "";
-    setHasToken(present);
-    setChecked(true);
-    if (!present) router.replace("/login");
-  }, [router]);
+    if (checked && !hasToken) router.replace("/login");
+  }, [checked, hasToken, router]);
 
   useEffect(() => {
     if (me.error instanceof ApiError && me.error.status === 401) {
