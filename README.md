@@ -75,6 +75,7 @@ docker compose build
 # test
 go test ./cmd/... ./internal/...           # add -coverprofile=coverage.out for SonarQube
 cd clients/web && npm test                 # npm run test:coverage emits lcov.info
+cd clients/web && npm run test:e2e         # Playwright — needs the live stack (compose or CI env)
 
 # migrations apply at api boot (embedded); seed demo data with RUN_SEED=1
 RUN_SEED=1 docker compose up api --build
@@ -100,7 +101,8 @@ docker run --rm --network host -e SONAR_HOST_URL=http://localhost:9000 \
 - `migrations/` — append-only `NNNN_name.up.sql` (golang-migrate, embedded)
 - `clients/web/` — Next.js admin portal
 - `templates/base/` — embedded fallback template · `seed/` — demo tenant
-  (`RUN_SEED=1`) · `e2e/` — Playwright suite (MPE-46) · `docs/`
+  (`RUN_SEED=1`) · `e2e/` — Go pipeline suite · `clients/web/e2e/` —
+  Playwright portal + API suite · `docs/`
 - `tools/covercheck.mjs` — 80% per-area coverage floor
 - `projectplan.md` — DGE specification
 

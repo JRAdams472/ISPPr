@@ -110,7 +110,7 @@ func Load() (Config, error) {
 		GotenbergURL:       gbURL,
 		GotenbergEndpoints: endpoints,
 		RenderTimeout:      time.Duration(renderSecs) * time.Second,
-		CORSOrigin:         env("CORS_ORIGIN", "http://localhost:3000"),
+		CORSOrigin:         env("CORS_ORIGIN", "http://localhost:3100"),
 		StorageBackend:     env("STORAGE_BACKEND", "local"),
 		S3Endpoint:         env("S3_ENDPOINT", "http://localhost:9100"),
 		S3PublicEndpoint:   env("S3_PUBLIC_ENDPOINT", ""),
