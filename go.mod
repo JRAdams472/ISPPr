@@ -1,6 +1,6 @@
 module github.com/jradams472/isppr
 
-go 1.27.2
+go 1.27.3
 
 require (
 	github.com/aymerick/raymond v2.0.2+incompatible
