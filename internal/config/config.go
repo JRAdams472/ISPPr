@@ -49,6 +49,12 @@ type Config struct {
 	OtelServiceName    string
 	OtelTracesEndpoint string
 	OtelLogsEndpoint   string
+	// MaxBodyBytes bounds the generate payload (413 over the bound);
+	// RateLimitRPS is the per-client steady-state rate (burst is 2×);
+	// JobTimeout is the global ceiling for one pipeline run.
+	MaxBodyBytes int64
+	RateLimitRPS float64
+	JobTimeout   time.Duration
 }
 
 func Load() (Config, error) {
@@ -73,6 +79,18 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	webhookMax, err := envInt("WEBHOOK_MAX_ATTEMPTS", 5)
+	if err != nil {
+		return Config{}, err
+	}
+	maxBody, err := envInt("MAX_BODY_BYTES", 4<<20)
+	if err != nil {
+		return Config{}, err
+	}
+	rateRPS, err := strconv.ParseFloat(env("RATE_LIMIT_RPS", "20"), 64)
+	if err != nil {
+		return Config{}, fmt.Errorf("RATE_LIMIT_RPS: %w", err)
+	}
+	jobSecs, err := envInt("JOB_TIMEOUT_SECONDS", 120)
 	if err != nil {
 		return Config{}, err
 	}
@@ -112,6 +130,9 @@ func Load() (Config, error) {
 		OtelServiceName:    env("OTEL_SERVICE_NAME", "isppr"),
 		OtelTracesEndpoint: env("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
 		OtelLogsEndpoint:   env("OTEL_LOGS_ENDPOINT", ""),
+		MaxBodyBytes:       int64(maxBody),
+		RateLimitRPS:       rateRPS,
+		JobTimeout:         time.Duration(jobSecs) * time.Second,
 	}, nil
 }
 

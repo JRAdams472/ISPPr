@@ -72,12 +72,17 @@ type Orchestrator struct {
 	maxDocs         int
 	budget          time.Duration
 	workers         int
+	jobTimeout      time.Duration
+	maxBody         int64
 	skipZipSingle   bool
 	webhookSecret   string
 	webhookAttempts int
 
 	wake chan struct{}
 	done sync.Map // requestID → chan struct{}
+
+	wg       sync.WaitGroup // active workers, drained by Shutdown
+	inflight sync.Map       // jobID → struct{} — requeued on shutdown
 }
 
 // errForbidden marks tenant-ownership failures — handlers map it to 403.
@@ -103,6 +108,8 @@ type Option func(*Orchestrator)
 func WithMaxDocs(n int) Option              { return func(o *Orchestrator) { o.maxDocs = n } }
 func WithSyncBudget(d time.Duration) Option { return func(o *Orchestrator) { o.budget = d } }
 func WithWorkers(n int) Option              { return func(o *Orchestrator) { o.workers = n } }
+func WithJobTimeout(d time.Duration) Option { return func(o *Orchestrator) { o.jobTimeout = d } }
+func WithMaxBody(n int64) Option            { return func(o *Orchestrator) { o.maxBody = n } }
 func WithSingleDocSkipZip(on bool) Option   { return func(o *Orchestrator) { o.skipZipSingle = on } }
 func WithWebhook(secret string, max int) Option {
 	return func(o *Orchestrator) { o.webhookSecret, o.webhookAttempts = secret, max }
@@ -113,6 +120,7 @@ func New(q *store.Queries, pool *render.Pool, st storage.Backend, opts ...Option
 	o := &Orchestrator{
 		q: q, pool: pool, store: st,
 		maxDocs: 25, budget: 8 * time.Second, workers: 4,
+		jobTimeout: 2 * time.Minute, maxBody: 4 << 20,
 		webhookAttempts: 5,
 		wake:            make(chan struct{}, 1),
 	}
@@ -223,8 +231,37 @@ func (o *Orchestrator) Await(ctx context.Context, requestID string) bool {
 // FOR UPDATE SKIP LOCKED, and run the full pipeline.
 func (o *Orchestrator) Start(ctx context.Context) {
 	for range o.workers {
-		go o.work(ctx)
+		o.wg.Add(1)
+		go func() {
+			defer o.wg.Done()
+			o.work(ctx)
+		}()
 	}
+}
+
+// Shutdown drains the pipeline: workers stop claiming, in-flight jobs get
+// up to ctx's deadline to finish, and anything still claimed is requeued
+// so a stopped instance leaves no zombies in CLAIMED.
+func (o *Orchestrator) Shutdown(ctx context.Context) {
+	done := make(chan struct{})
+	go func() {
+		o.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
+	// Whatever still holds a claim belongs to a worker this deadline
+	// abandoned — put it back so the next instance picks it up.
+	o.inflight.Range(func(k, _ any) bool {
+		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		_ = o.q.RequeueJob(cctx, store.RequeueJobParams{
+			ID: k.(string), Error: pgText("interrupted by shutdown"),
+		})
+		return true
+	})
 }
 
 func (o *Orchestrator) work(ctx context.Context) {
@@ -234,7 +271,9 @@ func (o *Orchestrator) work(ctx context.Context) {
 		job, err := o.q.ClaimJob(ctx)
 		switch {
 		case err == nil:
+			o.inflight.Store(job.ID, struct{}{})
 			o.execute(ctx, job)
+			o.inflight.Delete(job.ID)
 			continue
 		case errors.Is(err, pgx.ErrNoRows):
 		case errors.Is(err, context.Canceled):
@@ -254,6 +293,10 @@ func (o *Orchestrator) work(ctx context.Context) {
 // execute runs one job through resolve → render → pdf → zip → store.
 func (o *Orchestrator) execute(ctx context.Context, job store.GenerationJob) {
 	start := time.Now()
+	// Global ceiling for one pipeline run — a hung dependency can't hold a
+	// claim forever (the lease index is the crash-recovery backstop).
+	ctx, cancel := context.WithTimeout(ctx, o.jobTimeout)
+	defer cancel()
 	// The worker picks up async — there is no inbound request context to
 	// continue, so this is the root of the generation trace tree.
 	ctx, span := otel.Tracer("isppr/jobs").Start(ctx, "job.execute",
@@ -266,20 +309,24 @@ func (o *Orchestrator) execute(ctx context.Context, job store.GenerationJob) {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		slog.WarnContext(ctx, "generation failed", "request", job.RequestID, "err", err)
+		// Cleanup must outlive a cancelled pipeline ctx — otherwise a
+		// job interrupted mid-flight would be stranded as CLAIMED.
+		cctx, ccancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer ccancel()
 		if transient && job.Attempts < maxAttempts {
-			_ = o.q.RequeueJob(ctx, store.RequeueJobParams{
+			_ = o.q.RequeueJob(cctx, store.RequeueJobParams{
 				ID: job.ID, Error: pgText(err.Error()),
 			})
 			return
 		}
-		_ = o.q.SetRequestStatus(ctx, store.SetRequestStatusParams{
+		_ = o.q.SetRequestStatus(cctx, store.SetRequestStatusParams{
 			ID: job.RequestID, Status: StatusFailed, Error: pgText(err.Error()),
 		})
-		_ = o.q.FinishJob(ctx, store.FinishJobParams{
+		_ = o.q.FinishJob(cctx, store.FinishJobParams{
 			ID: job.ID, Status: StatusFailed, Error: pgText(err.Error()),
 		})
 		o.signal(job.RequestID)
-		go o.deliver(ctx, job.RequestID) // terminal failure still notifies
+		go o.deliver(cctx, job.RequestID) // terminal failure still notifies
 	}
 	defer func() {
 		if r := recover(); r != nil {

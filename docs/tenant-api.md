@@ -48,6 +48,9 @@ is a global 403.
 - `202` — still queued/in-flight after the budget; body carries
   `request_id` + current `status` only. Poll `GET /{request_id}`.
 - `400`/`403`/`401` — validation, ownership, auth failures (problem+json).
+- `413` — body exceeds `MAX_BODY_BYTES` (default 4 MiB; problem+json).
+- `429` — per-client rate limit exceeded (`RATE_LIMIT_RPS`, default 20/s,
+  burst 2×; problem+json).
 
 ### Idempotency
 
