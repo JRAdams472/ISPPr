@@ -27,7 +27,7 @@ docker compose up db gotenberg minio -d
 go run ./cmd/dge-api
 ```
 
-Web UI: http://localhost:3000 · API: http://localhost:8090 (`/healthz`,
+Web UI: http://localhost:3100 · API: http://localhost:8090 (`/healthz`,
 `/api/health`) · Gotenberg: http://localhost:3001 · MinIO console:
 http://localhost:9001.
 
@@ -86,18 +86,33 @@ node tools/covercheck.mjs coverage.out
 (cd clients/web && npx vitest run --coverage)
 node tools/covercheck.mjs clients/web/coverage/lcov.info
 
-# sonarqube scan (local instance on :9000 — shared lena2-sonarqube)
-docker run --rm --network host -e SONAR_HOST_URL=http://localhost:9000 \
-  -e SONAR_TOKEN=<token> -v "$PWD:/usr/src" sonarsource/sonar-scanner-cli
-docker run --rm --network host -e SONAR_HOST_URL=http://localhost:9000 \
-  -e SONAR_TOKEN=<token> -v "$PWD:/usr/src" sonarsource/sonar-scanner-cli
+# sonarqube scan (local instance on :9000 — start with
+# `docker compose -f docker-compose.sonarqube.yml up -d`, project key isppr).
+# Mount source subdirs only — a whole-repo mount crawls node_modules/.next.
+docker run --rm \
+  -v "$PWD/internal:/usr/src/internal" -v "$PWD/cmd:/usr/src/cmd" \
+  -v "$PWD/e2e:/usr/src/e2e" -v "$PWD/migrations:/usr/src/migrations" \
+  -v "$PWD/tools:/usr/src/tools" \
+  -v "$PWD/clients/web/app:/usr/src/clients/web/app" \
+  -v "$PWD/clients/web/lib:/usr/src/clients/web/lib" \
+  -v "$PWD/clients/web/__tests__:/usr/src/clients/web/__tests__" \
+  -v "$PWD/clients/web/e2e:/usr/src/clients/web/e2e" \
+  -v "$PWD/coverage.out:/usr/src/coverage.out" \
+  -v "$PWD/clients/web/coverage/lcov.info:/usr/src/clients/web/coverage/lcov.info" \
+  -v "$PWD/sonar-project.properties:/usr/src/sonar-project.properties" \
+  -e SONAR_TOKEN=<token> sonarsource/sonar-scanner-cli \
+  -Dsonar.host.url=http://host.docker.internal:9000
+# (Git Bash: use "$(pwd -W)/internal" for the mount paths.)
 ```
 
 ## Layout
 
 - `cmd/dge-api/` — Go API entrypoint
-- `internal/` — `config`, `server`, `store` (sqlc), plus domain stubs
-  `tenancy`, `templates`, `render`, `jobs`, `storage`, `admin`
+- `internal/` — `config`, `server` (Echo wiring + RFC 7807 errors),
+  `store` (sqlc), `tenancy` (API-key auth + rate limit), `templates`
+  (resolution engine), `render` (raymond binding + Gotenberg pool),
+  `jobs` (DB queue + pipeline orchestrator), `storage` (S3/local +
+  presigned downloads), `admin` (management API), `telemetry` (OTel)
 - `migrations/` — append-only `NNNN_name.up.sql` (golang-migrate, embedded)
 - `clients/web/` — Next.js admin portal
 - `templates/base/` — embedded fallback template · `seed/` — demo tenant
@@ -108,8 +123,11 @@ docker run --rm --network host -e SONAR_HOST_URL=http://localhost:9000 \
 
 ## Status
 
-P0 scaffold + P1 data layer shipped: sqlc repositories over `clients`,
-`customers`, `api_keys`, `admin_users`, versioned `template_masters` +
-customer `template_variants` (resolution spec:
-`docs/template-resolution.md`), embedded migrations at boot, demo seed,
-SonarQube + coverage-gated CI. See Linear team **MPE** for the phased plan.
+The MPE-22 megaplan (P0–P4) is shipped end to end: tenant API
+(`POST /api/v1/packages/generate`, status, presigned download, idempotent
+retries), template masters + customer variants, management/admin API,
+Next.js portal (login, client/customer/variant management, request
+monitoring), webhooks, OTel traces+logs, hardening (413/429 limits,
+graceful drain), and CI running Go/Web/Playwright-e2e/SonarQube jobs on
+every PR. See Linear team **MPE** for the phased plan and docs/ for the
+design notes.
