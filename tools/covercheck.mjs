@@ -107,7 +107,7 @@ for (const [path, [cov, tot]] of files) {
 console.log(`\ncovercheck — floor ${FLOOR}%/area, goal ${GOAL}% overall\n`);
 let fail = false;
 let sumC = 0, sumT = 0;
-for (const [dir, [c, t]] of [...areas].sort()) {
+for (const [dir, [c, t]] of [...areas].sort((a, b) => a[0].localeCompare(b[0]))) {
   const pct = t ? (100 * c) / t : 100;
   sumC += c; sumT += t;
   const mark = pct < FLOOR ? "FAIL" : " ok ";
