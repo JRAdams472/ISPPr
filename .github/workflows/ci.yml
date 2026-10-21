@@ -168,6 +168,7 @@ jobs:
           done
           GOTENBERG_URL=http://localhost:3000 \
             STORAGE_BACKEND=s3 S3_PUBLIC_ENDPOINT=http://localhost:9100 \
+            CORS_ORIGIN=http://localhost:3100 \
             RUN_SEED=1 PORT=8090 \
             nohup go run ./cmd/dge-api > api.log 2>&1 &
           for i in $(seq 1 60); do
