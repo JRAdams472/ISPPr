@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -12,6 +13,7 @@ import (
 	"github.com/jradams472/isppr/internal/store"
 	"github.com/jradams472/isppr/internal/tenancy"
 	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 )
 
 // response is the spec's egress shape (201 body + the async/status variant).
@@ -27,7 +29,7 @@ type response struct {
 // Mount registers the generation routes on the tenant-gated group
 // (/api/v1/packages — X-API-Key middleware already applied upstream).
 func (o *Orchestrator) Mount(g *echo.Group) {
-	g.POST("/generate", o.generate)
+	g.POST("/generate", o.generate, middleware.BodyLimit(strconv.FormatInt(o.maxBody, 10)+"B"))
 	g.GET("/:requestID", o.status)
 	g.GET("/:requestID/download", o.download)
 }

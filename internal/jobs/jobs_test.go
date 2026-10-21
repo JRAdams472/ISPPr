@@ -86,9 +86,11 @@ func seed(t *testing.T, q *store.Queries) fx {
 // env builds the full stack: echo + orchestrator + fake gotenberg + temp
 // storage, driven by a single worker.
 type env struct {
-	e   *echo.Echo
-	q   *store.Queries
-	dir string
+	e      *echo.Echo
+	q      *store.Queries
+	dir    string
+	orch   *jobs.Orchestrator
+	cancel context.CancelFunc // worker ctx — tests can trigger drain early
 }
 
 func newEnv(t *testing.T, delay time.Duration) *env {
@@ -117,6 +119,12 @@ func newEnvFlaky(t *testing.T, h func(w http.ResponseWriter)) *env {
 func newEnvHandler(t *testing.T, h http.HandlerFunc, budget time.Duration,
 	backend storage.Backend, opts ...jobs.Option) *env {
 	t.Helper()
+	return newEnvHandlerCfg(t, h, budget, backend, config.Config{}, opts...)
+}
+
+func newEnvHandlerCfg(t *testing.T, h http.HandlerFunc, budget time.Duration,
+	backend storage.Backend, cfg config.Config, opts ...jobs.Option) *env {
+	t.Helper()
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
 		dsn = "postgres://isppr:isppr@localhost:5433/isppr?sslmode=disable"
@@ -144,8 +152,8 @@ func newEnvHandler(t *testing.T, h http.HandlerFunc, budget time.Duration,
 	t.Cleanup(cancel)
 	go orch.Start(ctx)
 
-	e := server.New(config.Config{}, store.New(pool), pool, orch, rpool, backend)
-	return &env{e: e, q: store.New(pool), dir: dir}
+	e := server.New(cfg, store.New(pool), pool, orch, rpool, backend)
+	return &env{e: e, q: store.New(pool), dir: dir, orch: orch, cancel: cancel}
 }
 
 func doReq(t *testing.T, e *echo.Echo, method, path, body, key, idem string) (int, map[string]any, http.Header) {
@@ -728,5 +736,145 @@ func TestWebhookNoTarget(t *testing.T) {
 	}
 	if row.WebhookStatus != "NONE" {
 		t.Fatalf("webhook_status: %s", row.WebhookStatus)
+	}
+}
+
+// --- MPE-45: limits, error contract, graceful shutdown ---
+
+// TestRateLimitPerClient proves the per-client token bucket throttles the
+// abusing tenant with a 429 problem while leaving others alone.
+func TestRateLimitPerClient(t *testing.T) {
+	env := newEnvHandlerCfg(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("%PDF-fake"))
+	}, 20*time.Millisecond, nil, config.Config{RateLimitRPS: 1})
+	f := seed(t, env.q)
+	other := seed(t, env.q)
+
+	var saw429 bool
+	for i := 0; i < 4; i++ {
+		code, body, hdr := doReq(t, env.e, http.MethodPost, "/api/v1/packages/generate", genBody(f), f.key, "")
+		if code == http.StatusTooManyRequests {
+			saw429 = true
+			if ct := hdr.Get(echo.HeaderContentType); !strings.HasPrefix(ct, "application/problem+json") {
+				t.Fatalf("429 content-type: %s", ct)
+			}
+			if body["status"].(float64) != 429 {
+				t.Fatalf("problem body: %v", body)
+			}
+		}
+	}
+	if !saw429 {
+		t.Fatal("expected a 429 under sustained load")
+	}
+	// A different client rides its own bucket.
+	code, _, _ := doReq(t, env.e, http.MethodPost, "/api/v1/packages/generate", genBody(other), other.key, "")
+	if code != http.StatusCreated && code != http.StatusAccepted {
+		t.Fatalf("isolated tenant throttled: %d", code)
+	}
+}
+
+// TestBodyLimit413 — over-bound payloads are refused with a problem body.
+func TestBodyLimit413(t *testing.T) {
+	env := newEnvHandler(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("%PDF-fake"))
+	}, 3*time.Second, nil, jobs.WithMaxBody(64))
+	f := seed(t, env.q)
+	code, body, hdr := doReq(t, env.e, http.MethodPost, "/api/v1/packages/generate", genBody(f), f.key, "")
+	if code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("want 413, got %d %v", code, body)
+	}
+	if ct := hdr.Get(echo.HeaderContentType); !strings.HasPrefix(ct, "application/problem+json") {
+		t.Fatalf("413 content-type: %s", ct)
+	}
+	if body["status"].(float64) != 413 {
+		t.Fatalf("problem body: %v", body)
+	}
+}
+
+// TestShutdownRequeuesInflight — SIGTERM mid-render must not strand a
+// job in CLAIMED: the worker's detached cleanup requeues it.
+func TestShutdownRequeuesInflight(t *testing.T) {
+	// Render hangs on a test gate — the worker is guaranteed in-flight
+	// when we cut it. The gate releases after drain so the fake server
+	// can close cleanly.
+	release := make(chan struct{})
+	env := newEnvHandler(t, func(w http.ResponseWriter, r *http.Request) {
+		<-release
+	}, 20*time.Millisecond, nil)
+	// Registered after newEnvHandler so it runs before gb.Close (LIFO).
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+	f := seed(t, env.q)
+	code, b, _ := doReq(t, env.e, http.MethodPost, "/api/v1/packages/generate", genBody(f), f.key, "")
+	if code != http.StatusAccepted {
+		t.Fatalf("want 202, got %d %v", code, b)
+	}
+	rid := b["request_id"].(string)
+
+	// Wait until the worker has actually claimed the job.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		job, err := env.q.GetJobForRequest(context.Background(), rid)
+		if err == nil && job.Status == "CLAIMED" {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	job, err := env.q.GetJobForRequest(context.Background(), rid)
+	if err != nil || job.Status != "CLAIMED" {
+		t.Fatalf("job never claimed: %v %v", job.Status, err)
+	}
+
+	env.cancel()
+	shCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	env.orch.Shutdown(shCtx)
+	close(release)
+
+	job, err = env.q.GetJobForRequest(context.Background(), rid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != "QUEUED" {
+		t.Fatalf("shutdown left job %s — want QUEUED", job.Status)
+	}
+}
+
+// TestProblemContract sweeps the tenant surface: every error path answers
+// application/problem+json with the RFC 7807 shape.
+func TestProblemContract(t *testing.T) {
+	env := newEnv(t, 0)
+	f := seed(t, env.q)
+	cases := []struct {
+		name       string
+		method     string
+		path       string
+		body, key  string
+		wantStatus int
+	}{
+		{"unauthenticated", "POST", "/api/v1/packages/generate", "{}", "", 401},
+		{"forbidden template", "POST", "/api/v1/packages/generate",
+			fmt.Sprintf(`{"customer_id":%q,"package_name":"x","documents":[{"template_id":"tmpl_foreign","payload":{}}]}`, f.customer), f.key, 403},
+		{"missing field", "POST", "/api/v1/packages/generate", `{"package_name":"x","documents":[]}`, f.key, 400},
+		{"foreign request", "GET", "/api/v1/packages/req_foreign", "", f.key, 403},
+	}
+	for _, tc := range cases {
+		code, body, hdr := doReq(t, env.e, tc.method, tc.path, tc.body, tc.key, "")
+		if code != tc.wantStatus {
+			t.Errorf("%s: want %d, got %d %v", tc.name, tc.wantStatus, code, body)
+		}
+		if ct := hdr.Get(echo.HeaderContentType); !strings.HasPrefix(ct, "application/problem+json") {
+			t.Errorf("%s: content-type %s", tc.name, ct)
+		}
+		for _, k := range []string{"type", "title", "status"} {
+			if _, ok := body[k]; !ok {
+				t.Errorf("%s: problem body missing %q: %v", tc.name, k, body)
+			}
+		}
 	}
 }

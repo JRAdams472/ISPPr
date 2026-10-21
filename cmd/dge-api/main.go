@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/jradams472/isppr/internal/config"
@@ -89,9 +91,14 @@ func main() {
 		jobs.WithMaxDocs(cfg.MaxDocsPerPkg),
 		jobs.WithSyncBudget(cfg.SyncBudget),
 		jobs.WithWorkers(cfg.WorkerCount),
+		jobs.WithJobTimeout(cfg.JobTimeout),
+		jobs.WithMaxBody(cfg.MaxBodyBytes),
 		jobs.WithSingleDocSkipZip(cfg.SingleDocSkipZip),
 		jobs.WithWebhook(cfg.WebhookSecret, cfg.WebhookMaxAttempts))
-	go orch.Start(context.Background())
+	// Workers run on their own cancellable context so shutdown can drain
+	// them after HTTP intake stops.
+	workerCtx, stopWorkers := context.WithCancel(context.Background())
+	go orch.Start(workerCtx)
 
 	e := server.New(cfg, store.New(pool), pool, orch, rpool, backend)
 
@@ -101,13 +108,23 @@ func main() {
 		}
 	}()
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	// docker stop and k8s rollouts deliver SIGTERM — os.Interrupt alone
+	// would let the process run until SIGKILL, stranding claimed jobs.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	<-ctx.Done()
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := e.Shutdown(shutdownCtx); err != nil {
-		e.Logger.Fatal("shutdown: ", err)
+	// Graceful order: stop accepting requests, then stop claiming and let
+	// in-flight jobs finish within the grace window; survivors are
+	// requeued by Shutdown so no job is left in CLAIMED. The two phases
+	// get independent budgets so HTTP drain can't starve job requeue.
+	httpCtx, httpCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer httpCancel()
+	if err := e.Shutdown(httpCtx); err != nil {
+		slog.Error("http shutdown", "err", err)
 	}
+	stopWorkers()
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer drainCancel()
+	orch.Shutdown(drainCtx)
 }
