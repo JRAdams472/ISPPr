@@ -203,3 +203,63 @@ jobs:
             clients/web/playwright-report/
             clients/web/test-results/
           retention-days: 2
+
+  sonarqube:
+    name: SonarQube — scan + quality gate
+    needs: [go, web]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0 # blame + new-code detection need history
+      - name: Download Go coverage
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: go-coverage
+      - name: Download web coverage
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: web-coverage
+          path: clients/web/coverage
+      - name: Start SonarQube
+        # Self-hosted instance inside the job — no secrets, fully
+        # reproducible, and the quality gate is queryable in the same run.
+        run: |
+          docker run -d --name sonarqube -p 9000:9000 \
+            -e SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true \
+            sonarqube:community
+          for i in $(seq 1 90); do
+            s=$(curl -sf http://localhost:9000/api/system/status | grep -o '"status":"[A-Z_]*"' | cut -d'"' -f4 || true)
+            [ "$s" = "UP" ] && exit 0
+            [ "$s" = "DOWN" -o "$s" = "DB_MIGRATION_NEEDED" ] && { docker logs sonarqube --tail 50; exit 1; }
+            sleep 4
+          done
+          docker logs sonarqube --tail 80; exit 1
+      - name: Scanner token
+        # Default admin/admin is valid until changed; mint a token for the
+        # scanner rather than passing credentials to it.
+        run: |
+          token=$(curl -sf -u admin:admin \
+            -X POST http://localhost:9000/api/user_tokens/generate?name=ci \
+            | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+          [ -n "$token" ] || { echo "token generation failed"; exit 1; }
+          echo "SONAR_TOKEN=$token" >> "$GITHUB_ENV"
+      - name: Scan
+        run: >
+          docker run --rm --network host
+          -e SONAR_TOKEN=$SONAR_TOKEN
+          -e SONAR_HOST_URL=http://localhost:9000
+          -v "$PWD:/usr/src"
+          sonarsource/sonar-scanner-cli
+      - name: Quality gate
+        run: |
+          # Analysis is async — wait for the compute-engine task, then gate.
+          for i in $(seq 1 30); do
+            st=$(curl -sf -u "$SONAR_TOKEN:" \
+              "http://localhost:9000/api/qualitygates/project_status?projectKey=isppr" \
+              | grep -o '"status":"[A-Z_]*"' | head -1 | cut -d'"' -f4 || true)
+            [ -n "$st" ] && break
+            sleep 2
+          done
+          echo "quality gate: ${st:-unknown}"
+          [ "$st" != "ERROR" ] || exit 1
