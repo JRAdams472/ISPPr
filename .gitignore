@@ -32,3 +32,4 @@ Thumbs.db
 test-results/
 playwright-report/
 blob-report/
+clients/web/e2e/.auth/
