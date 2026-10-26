@@ -76,6 +76,10 @@ func resolveICC(path string) string {
 			return p
 		}
 	}
+	// Debian/Ubuntu version the resource dir: /usr/share/ghostscript/<ver>/iccprofiles.
+	if matches, _ := filepath.Glob("/usr/share/ghostscript/*/iccprofiles/" + path); len(matches) > 0 {
+		return matches[0]
+	}
 	return ""
 }
 
