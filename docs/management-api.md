@@ -81,11 +81,12 @@ GET  /admin/template-masters/:id                               → master | 404
 created_at, updated_at}`. Masters are append-only — publish creates a new
 version row; merge semantics in `docs/template-resolution.md`.
 
-`defaults` accepts `toggles`, `branding`, and `page` (print layout: size,
-orientation, margins, `header_html`/`footer_html` — see
-`docs/rendering.md`). An invalid `page` block (unknown size, negative
-margin, non-compiling header/footer source) is rejected with 400 on
-create/publish/preview.
+`defaults` accepts `toggles`, `branding`, `page` (print layout: size,
+orientation, margins, `header_html`/`footer_html`), and `print`
+(`{"enabled":true}` — Ghostscript CMYK/PDF-X post-processing on
+generated PDFs; see `docs/rendering.md`). An invalid `page` block
+(unknown size, negative margin, non-compiling header/footer source) is
+rejected with 400 on create/publish/preview.
 
 ### Template variants
 

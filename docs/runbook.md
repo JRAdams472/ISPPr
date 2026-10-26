@@ -64,6 +64,16 @@ run `sqlc generate` after touching queries.
 | `RATE_LIMIT_RPS` / `RATE_LIMIT_BURST` | 20/40 | per-key 429s |
 | `RENDER_TIMEOUT_MS` | 30000 | per-document Gotenberg timeout |
 | `GOTENBERG_URLS` | compose pool | comma-separated pool endpoints |
+| `PRINT_GS_PATH` | `gs` | Ghostscript binary for print-ready post-processing (empty disables) |
+| `PRINT_ICC_PROFILE` | — | output ICC profile for CMYK/PDF-X — name resolved under gs's iccprofiles dirs or an absolute path; empty = CMYK only, no OutputIntent |
+| `PRINT_PDFX` | true | stamp a PDF/X `/OutputIntent` when a profile resolves |
+| `PRINT_TIMEOUT_MS` | 20000 | per-document gs timeout |
+
+Print-ready post-processing runs only on documents whose resolved
+`defaults.print.enabled` (or `print_ready` override) is true — RGB
+documents pay nothing. gs ships in the api image with
+`default_cmyk.icc`; drop a SWOP/GRACoL profile under `icc/` for
+production. Failures surface as generation failures with the gs error.
 
 ## Shutdown
 
