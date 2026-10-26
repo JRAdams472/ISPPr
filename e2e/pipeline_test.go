@@ -375,3 +375,47 @@ func mediaBox(t *testing.T, pdf []byte) []byte {
 	end := bytes.IndexByte(pdf[i:], ']')
 	return pdf[i : i+end+1]
 }
+
+// MPE-56: a print-ready template's generated PDF is post-processed
+// through Ghostscript — CMYK color space, OutputIntent, embedded fonts.
+func TestGeneratePrintReady(t *testing.T) {
+	tok := adminToken(t)
+	name := "tmpl_cmyk_" + fmt.Sprint(time.Now().UnixNano()%1_000_000)
+	code, m := admin(t, tok, "POST", "/api/v1/admin/clients/"+demoClient+"/template-masters",
+		fmt.Sprintf(`{"name":%q,"html":"<h1 style=\"color:#d00\">{{title}}</h1>","defaults":{"print":{"enabled":true}}}`, name))
+	if code != 201 {
+		t.Fatalf("create master: %d %v", code, m)
+	}
+	code, body, _ := api(t, "POST", "/api/v1/packages/generate",
+		genBody(demoCustomer, "E2E_Print", [2]string{name, `{"title":"CMYK"}`}), demoKey, "")
+	if code != 201 && code != 202 {
+		t.Fatalf("generate: %d %v", code, body)
+	}
+	final := body
+	if body["status"] != "COMPLETED" {
+		final = waitDone(t, demoKey, body["request_id"].(string))
+	}
+	if final["status"] != "COMPLETED" {
+		t.Fatalf("final: %v", final)
+	}
+	dl := final["results"].(map[string]any)["download_url"].(string)
+	resp, err := client.Get(dl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	pdf := blob
+	if bytes.HasPrefix(blob, []byte("PK")) {
+		zr, _ := zip.NewReader(bytes.NewReader(blob), int64(len(blob)))
+		rc, _ := zr.File[0].Open()
+		pdf, _ = io.ReadAll(rc)
+		rc.Close()
+	}
+	s := string(pdf)
+	for _, marker := range []string{"/DeviceCMYK", "/OutputIntent", "/FontFile"} {
+		if !strings.Contains(s, marker) {
+			t.Fatalf("post-processed PDF missing %s", marker)
+		}
+	}
+}

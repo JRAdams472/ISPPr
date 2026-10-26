@@ -15,11 +15,19 @@ import (
 // css_patch is appended to the master CSS; toggles/branding override the
 // master's defaults key-by-key. Unknown keys are ignored on read so older
 // servers tolerate newer overlays.
+// PrintSetup is the post-processing block (MPE-56): a print-ready
+// template's PDFs are piped through Ghostscript for CMYK conversion,
+// font embedding, and PDF/X-style constraints. Last non-nil block wins.
+type PrintSetup struct {
+	Enabled bool `json:"enabled,omitempty"`
+}
+
 type Overlay struct {
 	CSSPatch string            `json:"css_patch,omitempty"`
 	Toggles  map[string]bool   `json:"toggles,omitempty"`
 	Branding map[string]string `json:"branding,omitempty"`
 	Page     *PageSetup        `json:"page,omitempty"`
+	Print    *PrintSetup       `json:"print,omitempty"`
 }
 
 // Defaults is the master-owned map a variant overlays (template_masters.
@@ -28,6 +36,7 @@ type Defaults struct {
 	Toggles  map[string]bool   `json:"toggles,omitempty"`
 	Branding map[string]string `json:"branding,omitempty"`
 	Page     *PageSetup        `json:"page,omitempty"`
+	Print    *PrintSetup       `json:"print,omitempty"`
 }
 
 // Resolved is the effective template handed to the renderer (MPE-33): final
@@ -40,6 +49,7 @@ type Resolved struct {
 	CSS     string
 	Context map[string]any
 	Page    *PageSetup
+	Print   *PrintSetup
 }
 
 // ParseOverlay decodes a template_variants.overlay row.
@@ -96,12 +106,18 @@ func Resolve(base Resolved, master *store.TemplateMaster, ov *Overlay) (Resolved
 		mergeInto(blocks, d.Toggles)
 		mergeInto(branding, d.Branding)
 		out.Page = mergePage(out.Page, d.Page)
+		if d.Print != nil {
+			out.Print = d.Print
+		}
 	}
 	if ov != nil {
 		out.CSS = joinCSS(out.CSS, ov.CSSPatch)
 		mergeInto(blocks, ov.Toggles)
 		mergeInto(branding, ov.Branding)
 		out.Page = mergePage(out.Page, ov.Page)
+		if ov.Print != nil {
+			out.Print = ov.Print
+		}
 	}
 	if len(blocks) > 0 {
 		out.Context["blocks"] = blocks

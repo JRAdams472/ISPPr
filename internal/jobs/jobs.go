@@ -28,9 +28,12 @@ import (
 )
 
 // DocPayload is one document in a generation request.
+// PrintReady (MPE-56) overrides the resolved template's defaults.print —
+// unset means "use the template's setting".
 type DocPayload struct {
-	Template string         `json:"template_id"`
-	Payload  map[string]any `json:"payload"`
+	Template   string         `json:"template_id"`
+	Payload    map[string]any `json:"payload"`
+	PrintReady *bool          `json:"print_ready,omitempty"`
 }
 
 // GenerateRequest is the POST /packages/generate body.
@@ -46,6 +49,7 @@ type Metrics struct {
 	TotalDocuments int   `json:"total_documents"`
 	ParsingMs      int64 `json:"parsing_duration_ms"`
 	RenderingMs    int64 `json:"rendering_duration_ms"`
+	PostprocessMs  int64 `json:"postprocess_duration_ms"`
 	CompressionMs  int64 `json:"compression_duration_ms"`
 	TotalMs        int64 `json:"total_duration_ms"`
 }
@@ -77,6 +81,10 @@ type Orchestrator struct {
 	skipZipSingle   bool
 	webhookSecret   string
 	webhookAttempts int
+
+	// postproc pipes print-ready PDFs through Ghostscript (MPE-56); nil
+	// means post-processing is unavailable in this environment.
+	postproc func(ctx context.Context, pdf []byte) ([]byte, error)
 
 	wake chan struct{}
 	done sync.Map // requestID → chan struct{}
@@ -113,6 +121,12 @@ func WithMaxBody(n int64) Option            { return func(o *Orchestrator) { o.m
 func WithSingleDocSkipZip(on bool) Option   { return func(o *Orchestrator) { o.skipZipSingle = on } }
 func WithWebhook(secret string, max int) Option {
 	return func(o *Orchestrator) { o.webhookSecret, o.webhookAttempts = secret, max }
+}
+
+// WithPostproc installs the print-ready converter — main wires it to
+// print.Convert bound to env config; tests inject stubs.
+func WithPostproc(fn func(ctx context.Context, pdf []byte) ([]byte, error)) Option {
+	return func(o *Orchestrator) { o.postproc = fn }
 }
 
 // New builds an orchestrator over the shared dependencies.
@@ -349,9 +363,11 @@ func (o *Orchestrator) execute(ctx context.Context, job store.GenerationJob) {
 		return
 	}
 
-	// Resolve + bind (parsing stage).
+	// Resolve + bind (parsing stage). printReady mirrors docs order —
+	// request override wins over the resolved defaults.print flag.
 	parsing := time.Now()
 	rdocs := make([]render.Doc, len(docs))
+	printReady := make([]bool, len(docs))
 	for i, d := range docs {
 		_, dspan := otel.Tracer("isppr/jobs").Start(ctx, "doc.bind",
 			trace.WithAttributes(attribute.String("template.id", d.Template)))
@@ -385,6 +401,10 @@ func (o *Orchestrator) execute(ctx context.Context, job store.GenerationJob) {
 		}
 		dspan.End()
 		rdocs[i] = render.Doc{ID: d.Template, HTML: html, CSS: resolved.CSS, Page: page}
+		printReady[i] = resolved.Print != nil && resolved.Print.Enabled
+		if d.PrintReady != nil {
+			printReady[i] = *d.PrintReady
+		}
 	}
 	parsingMs := time.Since(parsing).Milliseconds()
 
@@ -403,6 +423,34 @@ func (o *Orchestrator) execute(ctx context.Context, job store.GenerationJob) {
 			return
 		}
 	}
+
+	// Print-ready post-processing (MPE-56): pipe marked PDFs through
+	// Ghostscript for CMYK + embedded fonts + PDF/X constraints.
+	postprocess := time.Now()
+	var postMs int64
+	for i := range results {
+		if !printReady[i] {
+			continue
+		}
+		if o.postproc == nil {
+			fail(fmt.Errorf("postprocess %s: print post-processing unavailable (gs not installed)", results[i].ID), false)
+			return
+		}
+		_, pspan := otel.Tracer("isppr/jobs").Start(ctx, "print.postprocess",
+			trace.WithAttributes(attribute.String("template.id", results[i].ID)))
+		out, perr := o.postproc(ctx, results[i].PDF)
+		if perr != nil {
+			pspan.RecordError(perr)
+			pspan.SetStatus(codes.Error, perr.Error())
+			pspan.End()
+			fail(fmt.Errorf("postprocess %s: %w", results[i].ID, perr), false)
+			return
+		}
+		pspan.End()
+		results[i].PDF = out
+	}
+	postMs = time.Since(postprocess).Milliseconds()
+
 	if err := o.setStatus(ctx, req.ID, StatusCompressing); err != nil {
 		fail(err, false)
 		return
@@ -445,6 +493,7 @@ func (o *Orchestrator) execute(ctx context.Context, job store.GenerationJob) {
 		TotalDocuments: len(docs),
 		ParsingMs:      parsingMs,
 		RenderingMs:    renderingMs,
+		PostprocessMs:  postMs,
 		CompressionMs:  compressionMs,
 		TotalMs:        time.Since(start).Milliseconds(),
 	}

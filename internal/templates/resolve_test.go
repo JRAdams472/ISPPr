@@ -202,3 +202,18 @@ func TestResolvePageMerge(t *testing.T) {
 		t.Fatalf("overlay page merge wrong: %+v", got.Page)
 	}
 }
+
+func TestPrintSetupMerges(t *testing.T) {
+	m := &store.TemplateMaster{Html: "m", Defaults: json.RawMessage(
+		`{"print":{"enabled":true}}`)}
+	r, err := Resolve(Resolved{HTML: "b"}, m, nil)
+	if err != nil || r.Print == nil || !r.Print.Enabled {
+		t.Fatalf("master print not resolved: %+v %v", r.Print, err)
+	}
+	// Variant {enabled:false} overrides the master's enabled:true.
+	ov := &Overlay{Print: &PrintSetup{Enabled: false}}
+	r, err = Resolve(Resolved{HTML: "b"}, m, ov)
+	if err != nil || r.Print == nil || r.Print.Enabled {
+		t.Fatalf("variant print override lost: %+v %v", r.Print, err)
+	}
+}
