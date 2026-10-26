@@ -6,7 +6,7 @@ import { json } from "@codemirror/lang-json";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { ApiError } from "@/lib/api/client";
 import { masters } from "@/lib/api/resources";
