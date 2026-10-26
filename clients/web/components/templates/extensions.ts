@@ -10,8 +10,11 @@ import PaginationExtension, {
   PageNode,
   BodyNode,
 } from "tiptap-extension-pagination";
+import { ConditionalRegion } from "./cond-region";
+import { DataTable } from "./data-table";
 import { FontSize } from "./font-size";
 import { MergeField } from "./merge-field";
+import { PageBreak } from "./page-break";
 import { ParagraphLayout } from "./paragraph-layout";
 
 // Editor extension set (MPE-51). `paginate` splits the document into
@@ -33,6 +36,9 @@ export function editorExtensions({ paginate = true } = {}): AnyExtension[] {
     TextAlign.configure({ types: ["heading", "paragraph"] }),
     ParagraphLayout,
     MergeField,
+    ConditionalRegion,
+    DataTable,
+    PageBreak,
   ];
   if (paginate) {
     exts.push(
