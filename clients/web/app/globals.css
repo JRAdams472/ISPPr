@@ -11,3 +11,49 @@ body {
   color: #18181b; /* zinc-900 */
   font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
+
+/* Template editor canvas (MPE-51): the pagination extension renders
+   page elements; we supply the workbench around them — grey bench,
+   floating sheets, ink-consistent caret/selection. */
+
+.isppr-canvas {
+  min-height: 480px;
+}
+
+.isppr-canvas .ProseMirror {
+  outline: none;
+  caret-color: #0f766e; /* teal-700 */
+}
+
+.isppr-canvas .ProseMirror::selection,
+.isppr-canvas .ProseMirror ::selection {
+  background: #99f6e44d; /* teal-200 @ ~30% */
+}
+
+/* tiptap-extension-pagination sheets */
+.isppr-canvas [data-page] {
+  margin: 0 auto 24px;
+  box-shadow:
+    0 1px 2px rgb(24 24 27 / 0.08),
+    0 8px 24px -8px rgb(24 24 27 / 0.18);
+}
+
+/* Merge-field chips — inline atoms bound to {{expr}}. */
+.merge-field-chip {
+  display: inline-block;
+  padding: 0 0.375em;
+  border-radius: 0.375rem;
+  background: #f0fdfa; /* teal-50 */
+  border: 1px solid #99f6e4; /* teal-200 */
+  color: #0f766e; /* teal-700 */
+  font-family: ui-monospace, monospace;
+  font-size: 0.85em;
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.merge-field-chip.ProseMirror-selectednode {
+  outline: 2px solid #0f766e;
+  outline-offset: 1px;
+}

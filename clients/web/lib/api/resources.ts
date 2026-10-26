@@ -77,6 +77,14 @@ export const masters = {
       body,
     ),
   get: (id: string) => get<TemplateMaster>(`${A}/template-masters/${id}`),
+  // Renders an unsaved draft through Gotenberg — the editor's live
+  // preview. Nothing is persisted; any authed session may call it.
+  preview: (body: {
+    html: string;
+    css?: string;
+    defaults?: Record<string, unknown>;
+    data?: Record<string, unknown>;
+  }) => postBlob(`${A}/template-masters/preview`, body),
 };
 
 export const variants = {
