@@ -22,13 +22,21 @@ GET  /api/v1/packages/{request_id}/download
                                          // customer's webhook_url (admin API)
   "documents": [                         // required, non-empty, <= 50
     { "template_id": "invoice",          // template NAME (resolution is name-keyed)
-      "payload": { "title": "…" } }
+      "payload": { "title": "…" },
+      "print_ready": true }              // optional; overrides the resolved
+                                         // template's defaults.print.enabled
   ]
 }
 ```
 
 The tenant must own `customer_id` **and** every `template_id` — any mismatch
 is a global 403.
+
+`print_ready` is tri-state: absent → the resolved template's
+`defaults.print.enabled` decides; `true`/`false` → per-document override.
+Print-ready PDFs are piped through Ghostscript for CMYK conversion, font
+embedding, and a PDF/X OutputIntent (see `docs/rendering.md` —
+`defaults.print`).
 
 ### Responses
 

@@ -97,3 +97,28 @@ print layout — forwarded to Gotenberg's Chromium fields:
 - In-document layout: repeat table headers = `<thead>` (Chromium repeats
   natively); new page = `break-before: page`; new sheet (duplex) =
   `break-before: recto`.
+
+## Print-ready output (defaults.print)
+
+Masters (and variant overlays, and per-document `print_ready` overrides)
+may carry a `print` block switching generated PDFs through Ghostscript
+post-processing:
+
+```json
+{"print":{"enabled":true}}
+```
+
+When enabled, the Gotenberg-rendered PDF is piped through `gs` before
+packaging: RGB→CMYK under an output ICC profile, font embedding, and a
+PDF/X-style `/OutputIntent` — the shape a gang/rip workflow expects.
+
+- Scope: **generated downloads only** — the draft preview endpoint always
+  renders RGB.
+- Override order: per-document `print_ready` (generate request) → variant
+  overlay `print` → master `defaults.print`. Last non-nil wins.
+- Behavior is configured at the service level, not per template —
+  `PRINT_GS_PATH`, `PRINT_ICC_PROFILE`, `PRINT_PDFX`,
+  `PRINT_TIMEOUT_MS` (see `docs/runbook.md`).
+- Post-processing failures are permanent — the document's generation
+  fails with the gs error rather than silently shipping an unprocessed
+  PDF.
