@@ -6,14 +6,23 @@ import { json } from "@codemirror/lang-json";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
+import { ApiError } from "@/lib/api/client";
 import { masters } from "@/lib/api/resources";
 import type { TemplateMaster } from "@/lib/api/types";
 import { keys } from "@/lib/queries";
+import {
+  MM_PER_INCH,
+  extPaperSize,
+  pagePayload,
+  readPage,
+  type PageSetup,
+} from "@/lib/templates/page-setup";
 import { advancedConstructs, exportHTML, prepareForEditor } from "@/lib/templates/serialize";
 import { editorExtensions } from "./extensions";
 import { FieldPicker } from "./field-picker";
+import { PageSetupPanel } from "./page-setup";
 import { EditorToolbar } from "./toolbar";
 
 // Template master editor (MPE-51): dual-mode canvas — a paged TipTap
@@ -68,6 +77,10 @@ export function TemplateEditor({
   const [dataErr, setDataErr] = useState("");
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [pane, setPane] = useState<"preview" | "setup">("preview");
+  const [page, setPage] = useState<PageSetup>(() =>
+    readPage(master?.defaults),
+  );
 
   const editor = useEditor({
     extensions: editorExtensions({ paginate }),
@@ -75,6 +88,32 @@ export function TemplateEditor({
     editable: isAdmin,
     immediatelyRender: false,
   });
+
+  // Mirror page setup onto the paged canvas (visual only — the PDF
+  // layout is owned by defaults.page on the Gotenberg side).
+  useEffect(() => {
+    if (!editor || !paginate) return;
+    const m = page.margins ?? {};
+    editor.commands.setDocumentPaperSize(
+      extPaperSize(page.size) as never,
+    );
+    editor.commands.setDocumentPaperOrientation(
+      page.orientation ?? "portrait",
+    );
+    editor.commands.setDocumentPageMargins({
+      top: (m.top ?? 1) * MM_PER_INCH,
+      right: (m.right ?? 1) * MM_PER_INCH,
+      bottom: (m.bottom ?? 1) * MM_PER_INCH,
+      left: (m.left ?? 1) * MM_PER_INCH,
+    });
+  }, [editor, paginate, page]);
+
+  const defaultsPayload = useCallback(() => {
+    const p = pagePayload(page);
+    const base = { ...(master?.defaults ?? {}) };
+    if (Object.keys(p).length) base.page = p;
+    return base;
+  }, [page, master]);
 
   const currentHtml = useCallback(() => {
     if (mode === "source") return sourceHtml;
@@ -105,13 +144,13 @@ export function TemplateEditor({
         ? masters.publish(clientId, master.name, {
             html: currentHtml(),
             css: mode === "source" ? sourceCss : cssValue,
-            defaults: master.defaults,
+            defaults: defaultsPayload(),
           })
         : masters.create(clientId, {
             name: name.trim(),
             html: currentHtml(),
             css: mode === "source" ? sourceCss : cssValue,
-            defaults: {},
+            defaults: defaultsPayload(),
           }),
     onSuccess: (m) => {
       void qc.invalidateQueries({ queryKey: keys.masters(clientId) });
@@ -125,7 +164,7 @@ export function TemplateEditor({
       masters.preview({
         html: currentHtml(),
         css: mode === "source" ? sourceCss : cssValue,
-        defaults: master?.defaults ?? {},
+        defaults: defaultsPayload(),
         data: JSON.parse(sampleJson) as Record<string, unknown>,
       }),
     onSuccess: (blob) => {
@@ -138,6 +177,16 @@ export function TemplateEditor({
 
   const nameValid = editing || NAME_RE.test(name.trim());
   const canSave = isAdmin && nameValid && !save.isPending;
+
+  // Surface page-block problems (bad size, uncompilable header/footer)
+  // inside the panel, next to the fields that caused them.
+  const pageErr = useMemo(() => {
+    const err = save.error ?? preview.error;
+    const detail = err instanceof ApiError ? (err.problem.detail ?? err.message) : err?.message;
+    return detail && /page|margin|size|orientation|header|footer/i.test(detail)
+      ? detail
+      : undefined;
+  }, [save.error, preview.error]);
 
   return (
     <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_380px]">
@@ -296,10 +345,44 @@ export function TemplateEditor({
         ) : null}
       </div>
 
-      <section aria-labelledby="preview-heading" className="min-w-0">
-        <h3 id="preview-heading" className="mb-2 text-sm font-semibold text-zinc-900">
-          Preview
-        </h3>
+      <section aria-label="Editor side panel" className="min-w-0">
+        <div
+          role="tablist"
+          aria-label="Side panel"
+          className="mb-2 flex gap-1 text-xs"
+        >
+          {(
+            [
+              ["preview", "Preview"],
+              ["setup", "Page setup"],
+            ] as const
+          ).map(([k, label]) => (
+            <button
+              key={k}
+              role="tab"
+              aria-selected={pane === k}
+              onClick={() => setPane(k)}
+              className={`rounded-md px-2.5 py-1 font-medium transition-colors ${
+                pane === k
+                  ? "bg-zinc-900 text-white"
+                  : "text-zinc-500 hover:text-zinc-800"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {pane === "setup" ? (
+          <div className="rounded-lg border border-zinc-200 bg-white p-4">
+            <PageSetupPanel
+              value={page}
+              readOnly={!isAdmin}
+              error={pageErr}
+              onChange={setPage}
+            />
+          </div>
+        ) : (
         <div className="space-y-3 rounded-lg border border-zinc-200 bg-white p-4">
           <p className="text-xs font-medium text-zinc-600">Sample data (JSON)</p>
           <div className={editorBox}>
@@ -353,6 +436,7 @@ export function TemplateEditor({
             </div>
           )}
         </div>
+        )}
       </section>
     </div>
   );
