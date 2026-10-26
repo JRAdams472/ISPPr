@@ -204,6 +204,30 @@ export function PageSetupPanel({
         onChange={(v) => set({ footer_html: v })}
       />
 
+      <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2.5">
+        <label className="flex items-start gap-2">
+          <input
+            type="checkbox"
+            id="print-ready"
+            checked={value.print?.enabled ?? false}
+            disabled={readOnly}
+            onChange={(e) => set({ print: { enabled: e.target.checked } })}
+            className="mt-0.5 accent-teal-700"
+          />
+          <span>
+            <span className="block text-xs font-medium text-zinc-700">
+              Print-ready output
+            </span>
+            <span className="mt-0.5 block text-[11px] leading-4 text-zinc-400">
+              Generated PDFs are post-processed through Ghostscript — CMYK
+              conversion, font embedding, and a PDF/X OutputIntent for
+              gang/rip workflows. The preview stays RGB; this only applies
+              to generated downloads.
+            </span>
+          </span>
+        </label>
+      </div>
+
       <p className="text-[11px] leading-4 text-zinc-400">
         Print headers/footers ignore external CSS — use inline styles, and
         leave margin room (top/bottom) for them.{" {{…}} "}bindings resolve

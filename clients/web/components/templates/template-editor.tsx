@@ -16,6 +16,7 @@ import {
   MM_PER_INCH,
   extPaperSize,
   pagePayload,
+  printPayload,
   readPage,
   type PageSetup,
 } from "@/lib/templates/page-setup";
@@ -119,6 +120,11 @@ export function TemplateEditor({
     const p = pagePayload(page);
     const base = { ...(master?.defaults ?? {}) };
     if (Object.keys(p).length) base.page = p;
+    // defaults.print owns the Ghostscript post-process flag; dropping the
+    // key when off beats persisting a stale enabled:true.
+    const pr = printPayload(page.print);
+    if (Object.keys(pr).length) base.print = pr;
+    else delete base.print;
     // {{#if blocks.X}} regions flow into defaults.toggles so customer
     // variants can flip them; existing values are preserved.
     const tg = togglesFromHtml(currentHtml());

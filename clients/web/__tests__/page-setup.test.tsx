@@ -5,6 +5,7 @@ import {
   ALL_SIZES,
   extPaperSize,
   pagePayload,
+  printPayload,
   readPage,
   type PageSetup,
 } from "../lib/templates/page-setup";
@@ -64,6 +65,20 @@ describe("page-setup lib", () => {
     expect(
       pagePayload({ size: "A4", orientation: "portrait", margins: {} }),
     ).toEqual({ size: "A4", orientation: "portrait" });
+  });
+
+  it("reads and emits the print block (MPE-57)", () => {
+    expect(readPage(undefined).print).toEqual({ enabled: false });
+    expect(
+      readPage({ print: { enabled: true } }).print,
+    ).toEqual({ enabled: true });
+    // Unknown truthy values don't enable it accidentally.
+    expect(
+      readPage({ print: { enabled: "yes" } }).print?.enabled,
+    ).toBe(false);
+    expect(printPayload({ enabled: true })).toEqual({ enabled: true });
+    expect(printPayload({ enabled: false })).toEqual({});
+    expect(printPayload(undefined)).toEqual({});
   });
 });
 
@@ -133,6 +148,23 @@ describe("PageSetupPanel", () => {
         footer_html: '<span class="pageNumber"></span>',
       }),
     );
+  });
+
+  it("print-ready toggle emits print.enabled (MPE-57)", () => {
+    const { onChange } = setup();
+    const box = screen.getByRole("checkbox", { name: /print-ready/i });
+    expect((box as HTMLInputElement).checked).toBe(false);
+    fireEvent.click(box);
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ print: { enabled: true } }),
+    );
+    cleanup();
+    // A stored enabled:true restores the toggle on reload.
+    setup({ print: { enabled: true } });
+    expect(
+      (screen.getByRole("checkbox", { name: /print-ready/i }) as HTMLInputElement)
+        .checked,
+    ).toBe(true);
   });
 
   it("surfaces a validation error inline", () => {
