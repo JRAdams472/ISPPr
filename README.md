@@ -127,7 +127,10 @@ The MPE-22 megaplan (P0–P4) is shipped end to end: tenant API
 (`POST /api/v1/packages/generate`, status, presigned download, idempotent
 retries), template masters + customer variants, management/admin API,
 Next.js portal (login, client/customer/variant management, request
-monitoring), webhooks, OTel traces+logs, hardening (413/429 limits,
+monitoring), a WYSIWYG template editor (paged TipTap canvas, merge-field
+chips, page setup with headers/footers, conditional regions, data-bound
+tables, print breaks, live PDF preview, source mode), webhooks, OTel
+traces+logs, hardening (413/429 limits,
 graceful drain), and CI running Go/Web/Playwright-e2e/SonarQube jobs on
 every PR. See Linear team **MPE** for the phased plan and docs/ for the
 design notes.
