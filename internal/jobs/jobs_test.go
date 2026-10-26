@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -876,5 +877,67 @@ func TestProblemContract(t *testing.T) {
 				t.Errorf("%s: problem body missing %q: %v", tc.name, k, body)
 			}
 		}
+	}
+}
+
+// TestGeneratePageSetup: a master carrying defaults.page sends Gotenberg
+// the print fields + bound header/footer parts (MPE-50).
+func TestGeneratePageSetup(t *testing.T) {
+	var fields map[string][]string
+	parts := map[string]string{}
+	var mu sync.Mutex
+	env := newEnvHandler(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseMultipartForm(1 << 20)
+		mu.Lock()
+		defer mu.Unlock()
+		fields = r.MultipartForm.Value
+		for _, f := range r.MultipartForm.File["files"] {
+			rc, _ := f.Open()
+			b, _ := io.ReadAll(rc)
+			parts[f.Filename] = string(b)
+			rc.Close()
+		}
+		w.Write([]byte("%PDF-fake"))
+	}, 3*time.Second, nil)
+
+	f := seed(t, env.q)
+	if _, err := env.q.CreateTemplateMaster(context.Background(), store.CreateTemplateMasterParams{
+		ID: jid("tm"), ClientID: f.client, Name: f.template,
+		Html: "<h1>{{doc_title}}</h1>", Css: "", Version: 2,
+		Defaults: []byte(`{"page":{"size":"LETTER","orientation":"landscape","margins":{"top":1},"header_html":"<b>{{who}}</b>","footer_html":"<span class=\"pageNumber\"></span>"}}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out, _ := doReq(t, env.e, http.MethodPost, "/api/v1/packages/generate",
+		fmt.Sprintf(`{"customer_id":%q,"package_name":"PagePack","documents":[{"template_id":%q,"payload":{"doc_title":"T","who":"Acme"}}]}`, f.customer, f.template), f.key, "")
+	if code != http.StatusCreated && code != http.StatusOK && code != http.StatusAccepted {
+		t.Fatalf("generate: %d %v", code, out)
+	}
+	if id, ok := out["request_id"].(string); ok {
+		deadline := time.Now().Add(15 * time.Second)
+		var st string
+		for time.Now().Before(deadline) {
+			_, b, _ := doReq(t, env.e, http.MethodGet, "/api/v1/packages/"+id, "", f.key, "")
+			st, _ = b["status"].(string)
+			if st == "COMPLETED" || st == "FAILED" {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		if st != "COMPLETED" {
+			t.Fatalf("status: %s", st)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if fields["paperWidth"][0] != "8.5" || fields["paperHeight"][0] != "11" || fields["landscape"][0] != "true" {
+		t.Fatalf("print fields: %v", fields)
+	}
+	if parts["header.html"] != "<b>Acme</b>" {
+		t.Fatalf("bound header: %q", parts["header.html"])
+	}
+	if !strings.Contains(parts["footer.html"], "pageNumber") {
+		t.Fatalf("footer: %q", parts["footer.html"])
 	}
 }

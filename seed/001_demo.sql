@@ -57,6 +57,6 @@ VALUES (
     '<html><head></head><body>{{#if blocks.header}}<header class="hdr">INVOICE</header>{{/if}}<h1>{{title}}</h1><table>{{#each items}}<tr><td>{{title desc}}</td><td>{{currency price "USD"}}</td></tr>{{/each}}</table><p class="total">Total: {{currency total "USD"}}</p><p>Due: {{due}}</p>{{#if blocks.promo}}<footer class="promo">Thanks for your business!</footer>{{/if}}</body></html>',
     '.hdr{font-size:24px;font-weight:bold;color:#1a56db}table{width:100%;border-collapse:collapse}td{border-bottom:1px solid #ddd;padding:6px}.total{font-size:18px;font-weight:bold}.promo{color:#666;font-style:italic}',
     1,
-    '{"toggles":{"header":true,"promo":false},"branding":{"logo":"brand/demo.png"}}'
+    '{"toggles":{"header":true,"promo":false},"branding":{"logo":"brand/demo.png"},"page":{"size":"A4","orientation":"portrait","margins":{"top":0.8,"bottom":0.8,"left":0.8,"right":0.8},"footer_html":"<div style=\"font-size:9px;width:100%;text-align:center;color:#666\">Page <span class=\"pageNumber\"></span> of <span class=\"totalPages\"></span></div>"}}'
 )
 ON CONFLICT (id) DO NOTHING;

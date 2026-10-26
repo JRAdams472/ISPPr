@@ -90,3 +90,32 @@ func Render(resolved templates.Resolved, payload map[string]any) (string, error)
 	}
 	return tpl.Exec(resolved.ContextWith(payload))
 }
+
+// BindPageParts execs a resolved PageSetup's header/footer strips through
+// raymond with the same context as the body — payloads and branding can
+// appear in page strips. A nil PageSetup returns empty strings.
+func BindPageParts(resolved templates.Resolved, payload map[string]any) (header, footer string, err error) {
+	if resolved.Page == nil {
+		return "", "", nil
+	}
+	ctx := resolved.ContextWith(payload)
+	if resolved.Page.HeaderHTML != "" {
+		t, err := Compile(resolved.Page.HeaderHTML)
+		if err != nil {
+			return "", "", fmt.Errorf("header: %w", err)
+		}
+		if header, err = t.Exec(ctx); err != nil {
+			return "", "", fmt.Errorf("header exec: %w", err)
+		}
+	}
+	if resolved.Page.FooterHTML != "" {
+		t, err := Compile(resolved.Page.FooterHTML)
+		if err != nil {
+			return "", "", fmt.Errorf("footer: %w", err)
+		}
+		if footer, err = t.Exec(ctx); err != nil {
+			return "", "", fmt.Errorf("footer exec: %w", err)
+		}
+	}
+	return header, footer, nil
+}

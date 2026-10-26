@@ -371,8 +371,20 @@ func (o *Orchestrator) execute(ctx context.Context, job store.GenerationJob) {
 			fail(fmt.Errorf("render %s: %w", d.Template, err), false)
 			return
 		}
+		var page *render.PageOptions
+		if resolved.Page != nil {
+			hdr, ftr, perr := render.BindPageParts(resolved, d.Payload)
+			if perr != nil {
+				dspan.RecordError(perr)
+				dspan.SetStatus(codes.Error, perr.Error())
+				dspan.End()
+				fail(fmt.Errorf("page parts %s: %w", d.Template, perr), false)
+				return
+			}
+			page = render.PageOptionsFrom(resolved.Page, hdr, ftr)
+		}
 		dspan.End()
-		rdocs[i] = render.Doc{ID: d.Template, HTML: html, CSS: resolved.CSS}
+		rdocs[i] = render.Doc{ID: d.Template, HTML: html, CSS: resolved.CSS, Page: page}
 	}
 	parsingMs := time.Since(parsing).Milliseconds()
 

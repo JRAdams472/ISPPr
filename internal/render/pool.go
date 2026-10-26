@@ -10,10 +10,12 @@ import (
 	"net"
 	"net/http"
 	"net/textproto"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/jradams472/isppr/internal/templates"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -105,15 +107,54 @@ func NewPool(endpoints []string, opts ...PoolOption) (*Pool, error) {
 	return p, nil
 }
 
+// PageOptions is the resolved print-layout block for one render: page
+// dimensions in inches, orientation, margins, and the already-bound
+// header/footer HTML strips (Handlebars exec happens before this point).
+type PageOptions struct {
+	WidthIn, HeightIn float64
+	Landscape         bool
+	MarginTop         float64
+	MarginBottom      float64
+	MarginLeft        float64
+	MarginRight       float64
+	Header            string
+	Footer            string
+}
+
+// PageOptionsFrom converts a resolved PageSetup into pool options.
+// header/footer are the already data-bound strips (see BindPageParts).
+// A nil setup yields nil — renders keep Gotenberg's defaults.
+//
+// Width/Height are the PORTRAIT paper dimensions; the Landscape flag is
+// passed through separately. Chromium performs the swap itself — sending
+// swapped dimensions plus the flag double-rotates back to portrait.
+func PageOptionsFrom(p *templates.PageSetup, header, footer string) *PageOptions {
+	if p == nil {
+		return nil
+	}
+	w, h := p.Dimensions()
+	o := &PageOptions{
+		WidthIn: w, HeightIn: h,
+		Landscape: p.Landscape(),
+		Header:    header,
+		Footer:    footer,
+	}
+	if m := p.Margins; m != nil {
+		o.MarginTop, o.MarginBottom = m.Top, m.Bottom
+		o.MarginLeft, o.MarginRight = m.Left, m.Right
+	}
+	return o
+}
+
 // PDF renders one document (rendered HTML + resolved CSS) to a PDF via
 // /forms/chromium/convert/html, retrying transient failures with backoff
-// across the pool.
-func (p *Pool) PDF(ctx context.Context, html, css string) ([]byte, error) {
+// across the pool. page may be nil for Gotenberg defaults.
+func (p *Pool) PDF(ctx context.Context, html, css string, page *PageOptions) ([]byte, error) {
 	var last *RenderError
 	backoff := p.backoff
 	for attempt := 0; attempt <= p.retries; attempt++ {
 		ep := p.endpoint()
-		out, err := p.convert(ctx, ep, html, css)
+		out, err := p.convert(ctx, ep, html, css, page)
 		if err == nil {
 			return out, nil
 		}
@@ -142,6 +183,7 @@ type Doc struct {
 	ID   string
 	HTML string
 	CSS  string
+	Page *PageOptions
 }
 
 // Result pairs a doc ID with its PDF or its error — batch callers get
@@ -161,7 +203,7 @@ func (p *Pool) PDFBatch(ctx context.Context, docs []Doc) []Result {
 	for i, d := range docs {
 		results[i].ID = d.ID
 		g.Go(func() error {
-			pdf, err := p.PDF(ctx, d.HTML, d.CSS)
+			pdf, err := p.PDF(ctx, d.HTML, d.CSS, d.Page)
 			results[i].PDF, results[i].Err = pdf, err
 			return nil // per-doc errors ride in the Result, not the group
 		})
@@ -176,7 +218,7 @@ func (p *Pool) endpoint() string {
 }
 
 // convert does a single attempt against one endpoint.
-func (p *Pool) convert(ctx context.Context, ep, html, css string) ([]byte, error) {
+func (p *Pool) convert(ctx context.Context, ep, html, css string, page *PageOptions) ([]byte, error) {
 	ctx, span := otel.Tracer("isppr/render").Start(ctx, "gotenberg.convert",
 		trace.WithAttributes(
 			attribute.String("gotenberg.endpoint", ep),
@@ -185,7 +227,7 @@ func (p *Pool) convert(ctx context.Context, ep, html, css string) ([]byte, error
 	ctx, cancel := context.WithTimeout(ctx, p.timeout)
 	defer cancel()
 
-	body, ctype, err := multipartBody(html, css)
+	body, ctype, err := multipartBody(html, css, page)
 	if err != nil {
 		return nil, &RenderError{Kind: KindRenderFailed, Endpoint: ep, cause: err}
 	}
@@ -231,8 +273,11 @@ func (p *Pool) convert(ctx context.Context, ep, html, css string) ([]byte, error
 }
 
 // multipartBody builds the Gotenberg payload: index.html with the resolved
-// CSS injected as a <style> element, plus style.css for completeness.
-func multipartBody(html, css string) (*bytes.Buffer, string, error) {
+// CSS injected as a <style> element, plus style.css for completeness. A
+// PageOptions adds the Chromium print fields (paper size, landscape,
+// margins) and header.html/footer.html parts — their presence alone
+// switches on Gotenberg's header/footer rendering.
+func multipartBody(html, css string, page *PageOptions) (*bytes.Buffer, string, error) {
 	doc := injectCSS(html, css)
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
@@ -244,10 +289,49 @@ func multipartBody(html, css string) (*bytes.Buffer, string, error) {
 			return nil, "", err
 		}
 	}
+	if page != nil {
+		if err := writeField(w, "paperWidth", strconv.FormatFloat(page.WidthIn, 'f', -1, 64)); err != nil {
+			return nil, "", err
+		}
+		if err := writeField(w, "paperHeight", strconv.FormatFloat(page.HeightIn, 'f', -1, 64)); err != nil {
+			return nil, "", err
+		}
+		if page.Landscape {
+			if err := writeField(w, "landscape", "true"); err != nil {
+				return nil, "", err
+			}
+		}
+		for field, v := range map[string]float64{
+			"marginTop":    page.MarginTop,
+			"marginBottom": page.MarginBottom,
+			"marginLeft":   page.MarginLeft,
+			"marginRight":  page.MarginRight,
+		} {
+			if v != 0 {
+				if err := writeField(w, field, strconv.FormatFloat(v, 'f', -1, 64)); err != nil {
+					return nil, "", err
+				}
+			}
+		}
+		if page.Header != "" {
+			if err := writePart(w, "files", "header.html", "text/html", []byte(page.Header)); err != nil {
+				return nil, "", err
+			}
+		}
+		if page.Footer != "" {
+			if err := writePart(w, "files", "footer.html", "text/html", []byte(page.Footer)); err != nil {
+				return nil, "", err
+			}
+		}
+	}
 	if err := w.Close(); err != nil {
 		return nil, "", err
 	}
 	return &buf, w.FormDataContentType(), nil
+}
+
+func writeField(w *multipart.Writer, field, value string) error {
+	return w.WriteField(field, value)
 }
 
 // injectCSS drops a <style> block into the document head (or prepends one

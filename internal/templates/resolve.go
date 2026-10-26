@@ -19,6 +19,7 @@ type Overlay struct {
 	CSSPatch string            `json:"css_patch,omitempty"`
 	Toggles  map[string]bool   `json:"toggles,omitempty"`
 	Branding map[string]string `json:"branding,omitempty"`
+	Page     *PageSetup        `json:"page,omitempty"`
 }
 
 // Defaults is the master-owned map a variant overlays (template_masters.
@@ -26,15 +27,19 @@ type Overlay struct {
 type Defaults struct {
 	Toggles  map[string]bool   `json:"toggles,omitempty"`
 	Branding map[string]string `json:"branding,omitempty"`
+	Page     *PageSetup        `json:"page,omitempty"`
 }
 
 // Resolved is the effective template handed to the renderer (MPE-33): final
 // HTML/CSS plus a Context the renderer merges under caller data — `blocks`
 // drives {{#if blocks.<name>}} regions, `branding` swaps asset paths.
+// Page is the print-layout block (size/margins/header/footer) forwarded
+// to the render pool.
 type Resolved struct {
 	HTML    string
 	CSS     string
 	Context map[string]any
+	Page    *PageSetup
 }
 
 // ParseOverlay decodes a template_variants.overlay row.
@@ -90,11 +95,13 @@ func Resolve(base Resolved, master *store.TemplateMaster, ov *Overlay) (Resolved
 		}
 		mergeInto(blocks, d.Toggles)
 		mergeInto(branding, d.Branding)
+		out.Page = mergePage(out.Page, d.Page)
 	}
 	if ov != nil {
 		out.CSS = joinCSS(out.CSS, ov.CSSPatch)
 		mergeInto(blocks, ov.Toggles)
 		mergeInto(branding, ov.Branding)
+		out.Page = mergePage(out.Page, ov.Page)
 	}
 	if len(blocks) > 0 {
 		out.Context["blocks"] = blocks
