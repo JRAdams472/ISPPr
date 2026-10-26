@@ -9,12 +9,21 @@ export interface PageMargins {
   left?: number;
 }
 
+// PrintSetup is the post-processing block (MPE-57): a print-ready
+// template's generated PDFs are piped through Ghostscript for CMYK
+// conversion, font embedding, and a PDF/X-style OutputIntent. The
+// draft preview stays RGB — the flag only applies to generated output.
+export interface PrintSetup {
+  enabled?: boolean;
+}
+
 export interface PageSetup {
   size?: string;
   orientation?: "portrait" | "landscape";
   margins?: PageMargins;
   header_html?: string;
   footer_html?: string;
+  print?: PrintSetup;
 }
 
 export const MM_PER_INCH = 25.4;
@@ -69,7 +78,25 @@ export function readPage(defaults: Record<string, unknown> | undefined): PageSet
     margins: p.margins ?? {},
     header_html: p.header_html ?? "",
     footer_html: p.footer_html ?? "",
+    print: readPrint(defaults),
   };
+}
+
+/** Reads defaults.print out of a master's defaults blob. */
+export function readPrint(
+  defaults: Record<string, unknown> | undefined,
+): PrintSetup {
+  const p = (defaults?.print ?? {}) as PrintSetup;
+  return { enabled: p.enabled === true };
+}
+
+/**
+ * Emits the defaults.print block for the wire: {enabled:true} when on,
+ * {} when off — callers should delete the key rather than persist a
+ * stale enabled:true under the toggle.
+ */
+export function printPayload(p: PrintSetup | undefined): Record<string, unknown> {
+  return p?.enabled ? { enabled: true } : {};
 }
 
 /**
