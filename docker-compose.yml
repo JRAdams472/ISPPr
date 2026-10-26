@@ -65,6 +65,10 @@ services:
       DATABASE_URL: postgres://isppr:isppr@db:5432/isppr?sslmode=disable
       GOTENBERG_URL: http://gotenberg:3000
       S3_ENDPOINT: http://minio:9000
+      PRINT_GS_PATH: gs
+      PRINT_ICC_PROFILE: default_cmyk.icc
+      PRINT_PDFX: "true"
+      PRINT_TIMEOUT_MS: "20000"
       S3_PUBLIC_ENDPOINT: http://localhost:9100 # presigned URLs resolve for the host
       CORS_ORIGIN: http://localhost:3100
       RUN_SEED: "1" # dev demo tenant (cli_demo / cust_demo); unset in prod

@@ -7,12 +7,14 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"syscall"
 	"time"
 
 	"github.com/jradams472/isppr/internal/config"
 	"github.com/jradams472/isppr/internal/jobs"
+	"github.com/jradams472/isppr/internal/print"
 	"github.com/jradams472/isppr/internal/render"
 	"github.com/jradams472/isppr/internal/server"
 	"github.com/jradams472/isppr/internal/storage"
@@ -87,14 +89,28 @@ func main() {
 	default:
 		backend = &storage.LocalStore{Dir: cfg.StorageDir}
 	}
-	orch := jobs.New(store.New(pool), rpool, backend,
+	opts := []jobs.Option{
 		jobs.WithMaxDocs(cfg.MaxDocsPerPkg),
 		jobs.WithSyncBudget(cfg.SyncBudget),
 		jobs.WithWorkers(cfg.WorkerCount),
 		jobs.WithJobTimeout(cfg.JobTimeout),
 		jobs.WithMaxBody(cfg.MaxBodyBytes),
 		jobs.WithSingleDocSkipZip(cfg.SingleDocSkipZip),
-		jobs.WithWebhook(cfg.WebhookSecret, cfg.WebhookMaxAttempts))
+		jobs.WithWebhook(cfg.WebhookSecret, cfg.WebhookMaxAttempts),
+	}
+	// Print-ready post-processing (MPE-56): wire the gs converter when the
+	// binary is present; otherwise print-ready requests fail with a clear
+	// problem rather than the process dying at boot.
+	pcfg := print.Env(os.Getenv)
+	if _, lookErr := exec.LookPath(pcfg.GSPath); lookErr != nil {
+		slog.Warn("print post-processing disabled: gs not found", "gs", pcfg.GSPath)
+	} else {
+		opts = append(opts, jobs.WithPostproc(func(ctx context.Context, pdf []byte) ([]byte, error) {
+			return print.Convert(ctx, pcfg, pdf)
+		}))
+		slog.Info("print post-processing enabled", "gs", pcfg.GSPath, "icc", pcfg.ICCPath, "pdfx", pcfg.PDFX)
+	}
+	orch := jobs.New(store.New(pool), rpool, backend, opts...)
 	// Workers run on their own cancellable context so shutdown can drain
 	// them after HTTP intake stops.
 	workerCtx, stopWorkers := context.WithCancel(context.Background())

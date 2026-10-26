@@ -941,3 +941,89 @@ func TestGeneratePageSetup(t *testing.T) {
 		t.Fatalf("footer: %q", parts["footer.html"])
 	}
 }
+
+// MPE-56: print_ready documents get piped through the postproc hook
+// before packaging; plain docs bypass it entirely.
+func TestGeneratePrintReady(t *testing.T) {
+	var calls int
+	pp := func(ctx context.Context, pdf []byte) ([]byte, error) {
+		calls++
+		return append(pdf, []byte("-postprocessed")...), nil
+	}
+	h := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/pdf")
+		w.Write([]byte("%PDF-fake"))
+	}
+	env := newEnvHandler(t, h, 3*time.Second, nil, jobs.WithPostproc(pp))
+	f := seed(t, env.q)
+	body := fmt.Sprintf(`{"customer_id":%q,"package_name":"P","documents":[{"template_id":%q,"payload":{"title":"Hi"},"print_ready":true}]}`,
+		f.customer, f.template)
+	code, b, _ := doReq(t, env.e, http.MethodPost, "/api/v1/packages/generate", body, f.key, "")
+	if code != 201 || b["status"] != "COMPLETED" {
+		t.Fatalf("%d %v", code, b)
+	}
+	if calls != 1 {
+		t.Fatalf("postproc calls: %d", calls)
+	}
+	rid := b["request_id"].(string)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/packages/"+rid+"/download", nil)
+	req.Header.Set("X-API-Key", f.key)
+	rec := httptest.NewRecorder()
+	env.e.ServeHTTP(rec, req)
+	zr, _ := zip.NewReader(bytes.NewReader(rec.Body.Bytes()), int64(rec.Body.Len()))
+	rc, _ := zr.File[0].Open()
+	data, _ := io.ReadAll(rc)
+	rc.Close()
+	if !strings.Contains(string(data), "-postprocessed") {
+		t.Fatalf("postproc output missing: %q", data)
+	}
+
+	// A plain document never touches the hook.
+	calls = 0
+	code, b, _ = doReq(t, env.e, http.MethodPost, "/api/v1/packages/generate",
+		genBody(f), f.key, "")
+	if code != 201 || calls != 0 {
+		t.Fatalf("non-print doc hit postproc: %d %v calls=%d", code, b, calls)
+	}
+
+	// And a doc without the hook fails cleanly.
+	env2 := newEnv(t, 0)
+	f2 := seed(t, env2.q)
+	code, b, _ = doReq(t, env2.e, http.MethodPost, "/api/v1/packages/generate", body, f2.key, "")
+	if code == 201 && b["status"] == "COMPLETED" {
+		t.Fatal("print-ready doc completed without postproc configured")
+	}
+}
+
+// A postproc failure fails the request permanently (not retried).
+func TestGeneratePrintReadyPostprocError(t *testing.T) {
+	pp := func(ctx context.Context, pdf []byte) ([]byte, error) {
+		return nil, fmt.Errorf("gs blew up")
+	}
+	h := func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("%PDF-fake"))
+	}
+	env := newEnvHandler(t, h, 3*time.Second, nil, jobs.WithPostproc(pp))
+	f := seed(t, env.q)
+	body := fmt.Sprintf(`{"customer_id":%q,"package_name":"P","documents":[{"template_id":%q,"payload":{"title":"Hi"},"print_ready":true}]}`,
+		f.customer, f.template)
+	code, b, _ := doReq(t, env.e, http.MethodPost, "/api/v1/packages/generate", body, f.key, "")
+	if code != 201 && code != 202 && code != 200 {
+		t.Fatalf("%d %v", code, b)
+	}
+	st := b
+	if st["status"] != "FAILED" {
+		rid := b["request_id"].(string)
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			_, st, _ = doReq(t, env.e, http.MethodGet, "/api/v1/packages/"+rid, "", f.key, "")
+			if st["status"] == "FAILED" {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	if st["status"] != "FAILED" || !strings.Contains(fmt.Sprint(st["error"]), "postprocess") {
+		t.Fatalf("want FAILED with postprocess error, got %v", st)
+	}
+}
