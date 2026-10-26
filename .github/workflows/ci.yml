@@ -75,7 +75,7 @@ jobs:
         # Gotenberg + a seeded `go run` api over the postgres/minio already
         # up — real HTTP against the same binaries the unit suite exercised.
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y ghostscript >/dev/null
+          sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ghostscript >/dev/null
           docker run -d --name gotenberg -p 3000:3000 gotenberg/gotenberg:8
           for i in $(seq 1 30); do
             curl -sf http://localhost:3000/health && break || sleep 2
@@ -128,6 +128,11 @@ jobs:
   e2e:
     name: e2e — Playwright portal + API suite
     runs-on: ubuntu-latest
+    # The job runs inside the Playwright image — browsers AND system deps
+    # preinstalled (~10min of `apt-get` + `install --with-deps` eliminated).
+    # Image tag must match the resolved @playwright/test in package-lock.
+    container:
+      image: mcr.microsoft.com/playwright:v1.56.1-noble
     services:
       postgres:
         image: postgres:18-alpine
@@ -135,13 +140,15 @@ jobs:
           POSTGRES_USER: isppr
           POSTGRES_PASSWORD: isppr
           POSTGRES_DB: isppr
-        ports: ["5432:5432"]
         options: >-
           --health-cmd "pg_isready -U isppr -d isppr"
           --health-interval 5s --health-timeout 3s --health-retries 12
     env:
-      DATABASE_URL: postgres://isppr:isppr@localhost:5432/isppr?sslmode=disable
-      S3_ENDPOINT: http://localhost:9100
+      # Container jobs reach service containers by service name; sibling
+      # `docker run` containers share the job container's netns (below), so
+      # they stay on localhost — minio listens on 9000 directly (no -p map).
+      DATABASE_URL: postgres://isppr:isppr@postgres:5432/isppr?sslmode=disable
+      S3_ENDPOINT: http://localhost:9000
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
@@ -153,24 +160,33 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: clients/web/package-lock.json
-      - name: Start MinIO
+      - name: Install Docker CLI
+        # Job containers get the host's docker socket but not the CLI,
+        # and the playwright image doesn't ship it. Static binary, ~15s.
         run: |
-          docker run -d --name minio -p 9100:9000 \
+          curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz \
+            | tar xz --strip-components=1 -C /usr/local/bin docker/docker
+          docker version
+      - name: Start MinIO
+        # --network container: shares the job container's netns — minio stays
+        # on localhost exactly as on a host runner (its own port, 9000).
+        run: |
+          docker run -d --name minio --network container:$(hostname) \
             -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
             ghcr.io/coollabsio/minio:latest server /data
           for i in $(seq 1 30); do
-            curl -sf http://localhost:9100/minio/health/live && exit 0 || sleep 2
+            curl -sf http://localhost:9000/minio/health/live && exit 0 || sleep 2
           done
           docker logs minio; exit 1
       - name: Start Gotenberg + seeded api
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y ghostscript >/dev/null
-          docker run -d --name gotenberg -p 3000:3000 gotenberg/gotenberg:8
+          apt-get update -qq && apt-get install -y --no-install-recommends ghostscript >/dev/null
+          docker run -d --name gotenberg --network container:$(hostname) gotenberg/gotenberg:8
           for i in $(seq 1 30); do
             curl -sf http://localhost:3000/health && break || sleep 2
           done
           GOTENBERG_URL=http://localhost:3000 \
-            STORAGE_BACKEND=s3 S3_PUBLIC_ENDPOINT=http://localhost:9100 \
+            STORAGE_BACKEND=s3 S3_PUBLIC_ENDPOINT=http://localhost:9000 \
             PRINT_ICC_PROFILE=default_cmyk.icc \
             CORS_ORIGIN=http://localhost:3100 \
             RUN_SEED=1 PORT=8090 \
@@ -189,9 +205,6 @@ jobs:
             curl -sf http://localhost:3100/login > /dev/null && break || sleep 2
           done
           curl -sf http://localhost:3100/login > /dev/null || { cat web.log; exit 1; }
-      - name: Playwright browsers
-        working-directory: clients/web
-        run: npx playwright install --with-deps chromium
       - name: Playwright suite
         working-directory: clients/web
         env:
