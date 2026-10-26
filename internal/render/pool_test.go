@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/jradams472/isppr/internal/templates"
 )
 
 const gotenbergPath = "/forms/chromium/convert/html"
@@ -46,7 +48,7 @@ func TestPDFHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pdf, err := p.PDF(context.Background(), "<html><head></head><body>hi</body></html>", "h1{color:red}")
+	pdf, err := p.PDF(context.Background(), "<html><head></head><body>hi</body></html>", "h1{color:red}", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +72,7 @@ func TestPDFNoCSS(t *testing.T) {
 	srv := httptest.NewServer(fakeGotenberg(t, &parts))
 	defer srv.Close()
 	p, _ := NewPool([]string{srv.URL})
-	if _, err := p.PDF(context.Background(), "<p>x</p>", ""); err != nil {
+	if _, err := p.PDF(context.Background(), "<p>x</p>", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := parts["style.css"]; ok {
@@ -89,7 +91,7 @@ func TestRenderFailed4xxNoRetry(t *testing.T) {
 	}))
 	defer srv.Close()
 	p, _ := NewPool([]string{srv.URL}, WithRetries(3))
-	_, err := p.PDF(context.Background(), "x", "")
+	_, err := p.PDF(context.Background(), "x", "", nil)
 	var rerr *RenderError
 	if !errors.As(err, &rerr) || rerr.Kind != KindRenderFailed || rerr.Status != 400 {
 		t.Fatalf("want RenderFailed/400: %v", err)
@@ -115,7 +117,7 @@ func TestTransientRetriesAcrossPool(t *testing.T) {
 
 	p, _ := NewPool([]string{flaky.URL, good.URL},
 		WithRetries(2), WithBackoff(time.Millisecond))
-	pdf, err := p.PDF(context.Background(), "x", "")
+	pdf, err := p.PDF(context.Background(), "x", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +136,7 @@ func TestPoolUnavailableAfterRetries(t *testing.T) {
 	}))
 	defer srv.Close()
 	p, _ := NewPool([]string{srv.URL}, WithRetries(1), WithBackoff(time.Millisecond))
-	_, err := p.PDF(context.Background(), "x", "")
+	_, err := p.PDF(context.Background(), "x", "", nil)
 	var rerr *RenderError
 	if !errors.As(err, &rerr) || rerr.Kind != KindPoolUnavailable {
 		t.Fatalf("want PoolUnavailable: %v", err)
@@ -148,7 +150,7 @@ func TestTimeout(t *testing.T) {
 	defer srv.Close()
 	p, _ := NewPool([]string{srv.URL},
 		WithTimeout(50*time.Millisecond), WithRetries(0))
-	_, err := p.PDF(context.Background(), "x", "")
+	_, err := p.PDF(context.Background(), "x", "", nil)
 	var rerr *RenderError
 	if !errors.As(err, &rerr) || rerr.Kind != KindTimeout {
 		t.Fatalf("want Timeout: %v", err)
@@ -157,7 +159,7 @@ func TestTimeout(t *testing.T) {
 	// timeout, not pool_unavailable (transient 5xx keeps its own kind).
 	p2, _ := NewPool([]string{srv.URL},
 		WithTimeout(50*time.Millisecond), WithRetries(1), WithBackoff(time.Millisecond))
-	_, err = p2.PDF(context.Background(), "x", "")
+	_, err = p2.PDF(context.Background(), "x", "", nil)
 	var rerr2 *RenderError
 	if !errors.As(err, &rerr2) || rerr2.Kind != KindTimeout {
 		t.Fatalf("exhausted timeouts stay Timeout, got %v", err)
@@ -219,7 +221,7 @@ func TestComposeGotenberg(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	if _, err := p.PDF(ctx, "<html><body>probe</body></html>", ""); err != nil {
+	if _, err := p.PDF(ctx, "<html><body>probe</body></html>", "", nil); err != nil {
 		t.Skipf("gotenberg unreachable at %s: %v", ep, err)
 	}
 	cancel()
@@ -246,4 +248,80 @@ func TestComposeGotenberg(t *testing.T) {
 		}
 	}
 	t.Logf("6 concurrent renders via real gotenberg in %v", time.Since(start))
+}
+
+// PageOptions emit the Gotenberg print fields plus header/footer file
+// parts; nil page sends none of them.
+func TestPDFPageOptions(t *testing.T) {
+	var fields map[string][]string
+	parts := map[string]string{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseMultipartForm(1 << 20)
+		fields = r.MultipartForm.Value
+		for _, f := range r.MultipartForm.File["files"] {
+			rc, _ := f.Open()
+			b, _ := io.ReadAll(rc)
+			parts[f.Filename] = string(b)
+			rc.Close()
+		}
+		w.Header().Set("Content-Type", "application/pdf")
+		_, _ = w.Write([]byte("%PDF-fake"))
+	}))
+	defer srv.Close()
+	p, _ := NewPool([]string{srv.URL})
+
+	pg := &PageOptions{
+		WidthIn: 16.54, HeightIn: 11.69, Landscape: true,
+		MarginTop: 0.8, MarginBottom: 0.8,
+		Header: "<p>hdr</p>", Footer: "<span class=\"pageNumber\"></span>",
+	}
+	if _, err := p.PDF(context.Background(), "<p>x</p>", "", pg); err != nil {
+		t.Fatal(err)
+	}
+	if fields["paperWidth"][0] != "16.54" || fields["paperHeight"][0] != "11.69" {
+		t.Fatalf("paper size: %v", fields)
+	}
+	if fields["landscape"][0] != "true" {
+		t.Fatalf("landscape missing: %v", fields)
+	}
+	if fields["marginTop"][0] != "0.8" || fields["marginBottom"][0] != "0.8" {
+		t.Fatalf("margins: %v", fields)
+	}
+	if _, ok := fields["marginLeft"]; ok {
+		t.Fatal("zero margin should not be sent")
+	}
+	if parts["header.html"] != "<p>hdr</p>" || parts["footer.html"] == "" {
+		t.Fatalf("header/footer parts: %v", parts)
+	}
+
+	// nil page → no print fields.
+	fields = nil
+	parts = map[string]string{}
+	if _, err := p.PDF(context.Background(), "<p>x</p>", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if fields["paperWidth"] != nil || parts["header.html"] != "" {
+		t.Fatalf("nil page emitted fields: %v %v", fields, parts)
+	}
+}
+
+func TestPageOptionsFrom(t *testing.T) {
+	pg := PageOptionsFrom(nil, "", "")
+	if pg != nil {
+		t.Fatal("nil setup must yield nil options")
+	}
+	o := PageOptionsFrom(&templates.PageSetup{
+		Size: "A4", Orientation: "landscape",
+		Margins: &templates.Margins{Top: 1, Right: 0.5},
+	}, "<p>h</p>", "<p>f</p>")
+	// Portrait dims + flag — Chromium rotates, we don't swap.
+	if o.WidthIn != 8.27 || o.HeightIn != 11.69 || !o.Landscape {
+		t.Fatalf("dims: %+v", o)
+	}
+	if o.MarginTop != 1 || o.MarginRight != 0.5 || o.MarginBottom != 0 {
+		t.Fatalf("margins: %+v", o)
+	}
+	if o.Header != "<p>h</p>" || o.Footer != "<p>f</p>" {
+		t.Fatalf("parts: %+v", o)
+	}
 }

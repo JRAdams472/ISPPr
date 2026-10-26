@@ -65,3 +65,35 @@ fields (`doc_title`, `due_date`) when authoring templates.
   untrusted by construction.
 - Partials (`{{> name}}`) are not part of the surface — none are
   registered; they fail at render time.
+
+## Page setup (defaults.page)
+
+Masters (and variant overlays) may carry a `page` block steering the
+print layout — forwarded to Gotenberg's Chromium fields:
+
+```json
+{"page":{
+  "size":"A4",                      // A0-A8, ANSIA-ANSIE, LETTER, LEGAL, TABLOID, LEDGER
+  "orientation":"landscape",        // default portrait; Chromium rotates
+  "margins":{"top":0.8,"bottom":0.8,"left":1,"right":1},  // inches
+  "header_html":"<p>{{branding.logo}}</p>",
+  "footer_html":"<div style='font-size:9px;text-align:center;width:100%'>Page <span class='pageNumber'></span> of <span class='totalPages'></span></div>"
+}}
+```
+
+- `header.html`/`footer.html` become separate Gotenberg file parts — the
+  only mechanism that produces incrementing page numbers in Chromium
+  (`pageNumber` / `totalPages` / `date` / `title` classes). Never stamp
+  page numbers into the body.
+- Strips bind the same context as the body (payload fields, branding) and
+  must compile — the write path fails closed on bad source.
+- Chromium print headers/footers ignore external CSS: inline styles only,
+  and they need margin room (set `margins.top`/`bottom` to make space).
+- `landscape` is passed as Chromium's flag with portrait paper dims — do
+  NOT pre-swap width/height or the rotation cancels out.
+- Variants override `page` field-wise through the overlay merge (a
+  customer can reskin just the footer, say). A zero margin in an override
+  means "unset" — explicit zeroing isn't expressible in v1.
+- In-document layout: repeat table headers = `<thead>` (Chromium repeats
+  natively); new page = `break-before: page`; new sheet (duplex) =
+  `break-before: recto`.

@@ -3,6 +3,7 @@ package admin
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/jackc/pgx/v5"
@@ -50,6 +51,9 @@ func (a *API) createMaster(c echo.Context) error {
 	if len(req.Defaults) == 0 {
 		req.Defaults = json.RawMessage(`{}`)
 	}
+	if err := validateDefaults(req.Defaults); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
 	row, err := a.q.CreateTemplateMaster(c.Request().Context(), store.CreateTemplateMasterParams{
 		ID: newID("tmpl"), ClientID: clientID, Name: req.Name,
 		Html: req.HTML, Css: req.CSS, Version: 1, Defaults: req.Defaults,
@@ -81,6 +85,9 @@ func (a *API) publishMasterVersion(c echo.Context) error {
 	}
 	if len(req.Defaults) == 0 {
 		req.Defaults = json.RawMessage(`{}`)
+	}
+	if err := validateDefaults(req.Defaults); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 	row, err := a.q.CreateTemplateMaster(c.Request().Context(), store.CreateTemplateMasterParams{
 		ID: newID("tmpl"), ClientID: clientID, Name: name,
@@ -201,7 +208,12 @@ func (a *API) previewVariant(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "render: "+err.Error())
 	}
-	pdf, err := a.rpool.PDF(ctx, html, resolved.CSS)
+	hdr, ftr, err := render.BindPageParts(resolved, data)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "page parts: "+err.Error())
+	}
+	pdf, err := a.rpool.PDF(ctx, html, resolved.CSS,
+		render.PageOptionsFrom(resolved.Page, hdr, ftr))
 	if err != nil {
 		var rerr *render.RenderError
 		if errors.As(err, &rerr) && rerr.Kind == render.KindRenderFailed {
@@ -210,4 +222,96 @@ func (a *API) previewVariant(c echo.Context) error {
 		return err
 	}
 	return c.Blob(http.StatusOK, "application/pdf", pdf)
+}
+
+// masterPreviewReq is the draft-master preview payload: raw source +
+// defaults + sample data, never persisted.
+type masterPreviewReq struct {
+	HTML     string          `json:"html"`
+	CSS      string          `json:"css"`
+	Defaults json.RawMessage `json:"defaults"`
+	Data     json.RawMessage `json:"data"`
+}
+
+// previewMaster renders an unsaved master draft to PDF through the same
+// resolve → Handlebars → Gotenberg path generation uses. The defaults
+// block is validated exactly as on the write paths so the WYSIWYG editor
+// surfaces page-setup errors before save.
+func (a *API) previewMaster(c echo.Context) error {
+	if a.rpool == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "render pool unavailable")
+	}
+	var req masterPreviewReq
+	if err := c.Bind(&req); err != nil || req.HTML == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "html required")
+	}
+	if len(req.Defaults) == 0 {
+		req.Defaults = json.RawMessage(`{}`)
+	}
+	if err := validateDefaults(req.Defaults); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	ctx := c.Request().Context()
+	base, err := templates.Base()
+	if err != nil {
+		return err
+	}
+	master := store.TemplateMaster{
+		ID: "draft", Html: req.HTML, Css: req.CSS, Defaults: req.Defaults,
+	}
+	resolved, err := templates.Resolve(base, &master, nil)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "resolve: "+err.Error())
+	}
+	var data map[string]any
+	if len(req.Data) > 0 {
+		if err := json.Unmarshal(req.Data, &data); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "data must be a JSON object")
+		}
+	}
+	html, err := render.Render(resolved, data)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "render: "+err.Error())
+	}
+	hdr, ftr, err := render.BindPageParts(resolved, data)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "page parts: "+err.Error())
+	}
+	pdf, err := a.rpool.PDF(ctx, html, resolved.CSS,
+		render.PageOptionsFrom(resolved.Page, hdr, ftr))
+	if err != nil {
+		var rerr *render.RenderError
+		if errors.As(err, &rerr) && rerr.Kind == render.KindRenderFailed {
+			return echo.NewHTTPError(http.StatusBadRequest, rerr.Error())
+		}
+		return err
+	}
+	return c.Blob(http.StatusOK, "application/pdf", pdf)
+}
+
+// validateDefaults checks the optional page block in a master defaults
+// payload: known size/orientation/margins plus a raymond-compile gate on
+// the header/footer strips (fail closed, same as the body).
+func validateDefaults(raw json.RawMessage) error {
+	d, err := templates.ParseDefaults(raw)
+	if err != nil {
+		return err
+	}
+	if d.Page == nil {
+		return nil
+	}
+	if err := d.Page.Validate(); err != nil {
+		return err
+	}
+	if d.Page.HeaderHTML != "" {
+		if _, err := render.Compile(d.Page.HeaderHTML); err != nil {
+			return fmt.Errorf("page.header_html: %w", err)
+		}
+	}
+	if d.Page.FooterHTML != "" {
+		if _, err := render.Compile(d.Page.FooterHTML); err != nil {
+			return fmt.Errorf("page.footer_html: %w", err)
+		}
+	}
+	return nil
 }

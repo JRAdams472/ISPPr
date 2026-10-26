@@ -180,3 +180,25 @@ func TestContextWith(t *testing.T) {
 }
 
 // ResolveFor needs a live DB — see resolve_integration_test.go.
+
+// Page setup merges through the same base→master→variant chain: master
+// fields land on Resolved.Page, overlay fields override field-wise.
+func TestResolvePageMerge(t *testing.T) {
+	m := master()
+	m.Defaults = json.RawMessage(`{"page":{"size":"A3","orientation":"landscape","footer_html":"<p>F</p>"}}`)
+	got, err := Resolve(Resolved{HTML: "b"}, m, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Page == nil || got.Page.Size != "A3" || !got.Page.Landscape() || got.Page.FooterHTML != "<p>F</p>" {
+		t.Fatalf("master page not resolved: %+v", got.Page)
+	}
+	ov := &Overlay{Page: &PageSetup{Size: "A4"}}
+	got, err = Resolve(Resolved{HTML: "b"}, m, ov)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Page.Size != "A4" || got.Page.Orientation != "landscape" || got.Page.FooterHTML != "<p>F</p>" {
+		t.Fatalf("overlay page merge wrong: %+v", got.Page)
+	}
+}

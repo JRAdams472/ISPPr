@@ -311,3 +311,67 @@ func TestGenerateAuthzDenials(t *testing.T) {
 		t.Fatalf("cross-tenant download: want 403, got %d %v", code, m)
 	}
 }
+
+// Page setup (MPE-50): a master carrying defaults.page renders through
+// real Gotenberg with the requested orientation — asserted on the PDF's
+// MediaBox (A5 landscape ≈ 595.92×420pt — wider than tall).
+func TestGeneratePageSetup(t *testing.T) {
+	tok := adminToken(t)
+	name := "tmpl_page_" + fmt.Sprint(time.Now().UnixNano()%1_000_000)
+	code, m := admin(t, tok, "POST", "/api/v1/admin/clients/"+demoClient+"/template-masters",
+		fmt.Sprintf(`{"name":%q,"html":"<h1>{{title}}</h1>","defaults":{"page":{"size":"A5","orientation":"landscape","footer_html":"<div style=\"font-size:9px\">Page <span class=\"pageNumber\"></span></div>"}}}`, name))
+	if code != 201 {
+		t.Fatalf("create master: %d %v", code, m)
+	}
+	code, body, _ := api(t, "POST", "/api/v1/packages/generate",
+		genBody(demoCustomer, "E2E_Page", [2]string{name, `{"title":"Landscape"}`}), demoKey, "")
+	if code != 201 && code != 202 {
+		t.Fatalf("generate: %d %v", code, body)
+	}
+	final := body
+	if body["status"] != "COMPLETED" {
+		final = waitDone(t, demoKey, body["request_id"].(string))
+	}
+	if final["status"] != "COMPLETED" {
+		t.Fatalf("final: %v", final)
+	}
+	dl := final["results"].(map[string]any)["download_url"].(string)
+	resp, err := client.Get(dl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	// The package is a ZIP — extract the lone PDF member.
+	pdf := blob
+	if bytes.HasPrefix(blob, []byte("PK")) {
+		zr, err := zip.NewReader(bytes.NewReader(blob), int64(len(blob)))
+		if err != nil || len(zr.File) != 1 {
+			t.Fatalf("zip: %v files=%d", err, len(zr.File))
+		}
+		rc, _ := zr.File[0].Open()
+		pdf, _ = io.ReadAll(rc)
+		rc.Close()
+	}
+	// A5 landscape → MediaBox wider than tall (~595.92×420).
+	var w, h float64
+	if _, err := fmt.Sscanf(
+		strings.TrimSpace(string(mediaBox(t, pdf))),
+		"MediaBox [0 0 %f %f]", &w, &h); err != nil || w <= h {
+		t.Fatalf("want landscape MediaBox, got %v err=%v", string(mediaBox(t, pdf)), err)
+	}
+}
+
+// mediaBox finds the page box in the (uncompressed) PDF object stream.
+func mediaBox(t *testing.T, pdf []byte) []byte {
+	t.Helper()
+	if string(pdf[:5]) != "%PDF-" {
+		t.Fatalf("not a PDF: %q", pdf[:8])
+	}
+	i := bytes.Index(pdf, []byte("MediaBox"))
+	if i < 0 {
+		t.Fatal("no MediaBox in pdf")
+	}
+	end := bytes.IndexByte(pdf[i:], ']')
+	return pdf[i : i+end+1]
+}

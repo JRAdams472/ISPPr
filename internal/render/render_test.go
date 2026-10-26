@@ -106,3 +106,32 @@ func TestUnknownHelperAndPath(t *testing.T) {
 		t.Fatalf("missing path: %q %v", got, err)
 	}
 }
+
+// Header/footer strips bind the same context as the body — payload fields
+// and branding resolve inside page parts.
+func TestBindPageParts(t *testing.T) {
+	res := templates.Resolved{
+		HTML: "<p>body</p>",
+		Page: &templates.PageSetup{
+			HeaderHTML: "<p>{{upper brand}}</p>",
+			FooterHTML: "<span class=\"pageNumber\"></span>",
+		},
+	}
+	hdr, ftr, err := BindPageParts(res, map[string]any{"brand": "acme"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hdr != "<p>ACME</p>" || !strings.Contains(ftr, "pageNumber") {
+		t.Fatalf("bound parts: %q %q", hdr, ftr)
+	}
+	// nil page → empty, no error.
+	h, f, err := BindPageParts(templates.Resolved{HTML: "x"}, nil)
+	if err != nil || h != "" || f != "" {
+		t.Fatalf("nil page: %q %q %v", h, f, err)
+	}
+	// Bad footer source fails closed.
+	res.Page.FooterHTML = "{{#if}}"
+	if _, _, err := BindPageParts(res, nil); err == nil {
+		t.Fatal("bad footer must error")
+	}
+}

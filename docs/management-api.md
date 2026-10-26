@@ -73,12 +73,19 @@ Default scope `["generate"]`.
 GET  /admin/clients/:id/template-masters                       → [master] (all versions)
 POST /admin/clients/:id/template-masters {"name","html","css"?,"defaults"?} → 201 v1 | 409 if name exists
 POST /admin/clients/:id/template-masters/:name/versions {"html","css"?,"defaults"?} → 201 next version | 404
+POST /admin/template-masters/preview {"html","css"?,"defaults"?,"data"?} → PDF (draft, nothing persisted)
 GET  /admin/template-masters/:id                               → master | 404
 ```
 
 `master` = `{id:"tmpl_…", client_id, name, version, html, css, defaults:{…},
 created_at, updated_at}`. Masters are append-only — publish creates a new
 version row; merge semantics in `docs/template-resolution.md`.
+
+`defaults` accepts `toggles`, `branding`, and `page` (print layout: size,
+orientation, margins, `header_html`/`footer_html` — see
+`docs/rendering.md`). An invalid `page` block (unknown size, negative
+margin, non-compiling header/footer source) is rejected with 400 on
+create/publish/preview.
 
 ### Template variants
 

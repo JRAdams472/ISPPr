@@ -64,6 +64,7 @@ func (a *API) Mount(v1 *echo.Group) {
 	g.GET("/clients/:id/template-masters", a.listMasters)
 	g.POST("/clients/:id/template-masters", a.createMaster, a.requireWrite)
 	g.POST("/clients/:id/template-masters/:name/versions", a.publishMasterVersion, a.requireWrite)
+	g.POST("/template-masters/preview", a.previewMaster)
 	g.GET("/template-masters/:id", a.getMaster)
 
 	g.PUT("/template-variants", a.upsertVariant, a.requireWrite)

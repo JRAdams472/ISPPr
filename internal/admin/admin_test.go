@@ -480,3 +480,150 @@ func TestVariantPreview(t *testing.T) {
 		t.Fatalf("unknown master: got %d, want 404", code)
 	}
 }
+
+// TestMasterPreview exercises the draft-master preview endpoint (MPE-50):
+// raw html/css/defaults + sample data render to PDF without persisting,
+// and the page block's header/footer + print fields reach Gotenberg.
+func TestMasterPreview(t *testing.T) {
+	var fields map[string][]string
+	parts := map[string]string{}
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseMultipartForm(1 << 20)
+		fields = r.MultipartForm.Value
+		for _, f := range r.MultipartForm.File["files"] {
+			rc, _ := f.Open()
+			b, _ := io.ReadAll(rc)
+			parts[f.Filename] = string(b)
+			rc.Close()
+		}
+		w.Header().Set("Content-Type", "application/pdf")
+		_, _ = w.Write([]byte("%PDF-fake"))
+	}))
+	t.Cleanup(fake.Close)
+	rpool, err := render.NewPool([]string{fake.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, q, _, _ := testServer(t, rpool)
+	ctx := context.Background()
+
+	sfx := fmt.Sprintf("%d", rand.Int63())
+	hash, _ := bcrypt.GenerateFromPassword([]byte("pw"), bcrypt.MinCost)
+	if _, err := q.CreateAdminUser(ctx, store.CreateAdminUserParams{
+		ID: "adm_mp" + sfx, Email: "mp" + sfx + "@isppr.local",
+		Name: "MP", PasswordHash: string(hash), Role: "admin",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	code, login := do(t, e, http.MethodPost, "/api/v1/admin/login",
+		fmt.Sprintf(`{"email":%q,"password":"pw"}`, "mp"+sfx+"@isppr.local"), "")
+	if code != http.StatusOK {
+		t.Fatalf("login: %d", code)
+	}
+	tok := login["token"].(string)
+
+	// Draft with a page block: A3 landscape + footer page numbers bound
+	// to payload via {{who}} in the header.
+	code, body := do(t, e, http.MethodPost, "/api/v1/admin/template-masters/preview",
+		`{"html":"<h1>{{doc_title}}</h1>","css":"h1{color:black}",
+		  "defaults":{"page":{"size":"A3","orientation":"landscape",
+		    "margins":{"top":1},"header_html":"<b>{{who}}</b>",
+		    "footer_html":"<span class=\"pageNumber\"></span>"}},
+		  "data":{"doc_title":"T","who":"Acme"}}`, tok)
+	if code != http.StatusOK {
+		t.Fatalf("preview: %d %v", code, body)
+	}
+	if fields["paperWidth"][0] != "11.69" || fields["paperHeight"][0] != "16.54" || fields["landscape"][0] != "true" {
+		t.Fatalf("page fields not sent: %v", fields)
+	}
+	if parts["header.html"] != "<b>Acme</b>" {
+		t.Fatalf("header not bound to payload: %q", parts["header.html"])
+	}
+	if !strings.Contains(parts["footer.html"], "pageNumber") {
+		t.Fatalf("footer part: %q", parts["footer.html"])
+	}
+	if !strings.Contains(parts["index.html"], "<h1>T</h1>") {
+		t.Fatalf("body not bound: %q", parts["index.html"])
+	}
+
+	// Invalid page block → 400.
+	if code, _ := do(t, e, http.MethodPost, "/api/v1/admin/template-masters/preview",
+		`{"html":"<p>x</p>","defaults":{"page":{"size":"NOPE"}}}`, tok); code != http.StatusBadRequest {
+		t.Fatalf("bad page: got %d, want 400", code)
+	}
+	// Header that fails raymond compile → 400.
+	if code, _ := do(t, e, http.MethodPost, "/api/v1/admin/template-masters/preview",
+		`{"html":"<p>x</p>","defaults":{"page":{"header_html":"{{#if}}"}}}`, tok); code != http.StatusBadRequest {
+		t.Fatalf("bad header: got %d, want 400", code)
+	}
+	// Malformed defaults JSON → 400.
+	if code, _ := do(t, e, http.MethodPost, "/api/v1/admin/template-masters/preview",
+		`{"html":"<p>x</p>","defaults":{"page":{nope}}}`, tok); code != http.StatusBadRequest {
+		t.Fatalf("bad defaults: got %d, want 400", code)
+	}
+	// Non-object sample data → 400.
+	if code, _ := do(t, e, http.MethodPost, "/api/v1/admin/template-masters/preview",
+		`{"html":"<p>x</p>","data":[1,2]}`, tok); code != http.StatusBadRequest {
+		t.Fatalf("bad data: got %d, want 400", code)
+	}
+	// Body that fails raymond compile → 400.
+	if code, _ := do(t, e, http.MethodPost, "/api/v1/admin/template-masters/preview",
+		`{"html":"{{#if}}"}`, tok); code != http.StatusBadRequest {
+		t.Fatalf("bad html: got %d, want 400", code)
+	}
+	// Missing html → 400.
+	if code, _ := do(t, e, http.MethodPost, "/api/v1/admin/template-masters/preview",
+		`{"css":"p{}"}`, tok); code != http.StatusBadRequest {
+		t.Fatalf("missing html: got %d, want 400", code)
+	}
+}
+
+// TestMasterPageValidation covers the write-path gate: create/publish
+// reject an invalid defaults.page with 400.
+func TestMasterPageValidation(t *testing.T) {
+	e, q, _, _ := testServer(t, nil)
+	ctx := context.Background()
+	sfx := fmt.Sprintf("%d", rand.Int63())
+	hash, _ := bcrypt.GenerateFromPassword([]byte("pw"), bcrypt.MinCost)
+	if _, err := q.CreateAdminUser(ctx, store.CreateAdminUserParams{
+		ID: "adm_v" + sfx, Email: "v" + sfx + "@isppr.local",
+		Name: "V", PasswordHash: string(hash), Role: "admin",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	code, login := do(t, e, http.MethodPost, "/api/v1/admin/login",
+		fmt.Sprintf(`{"email":%q,"password":"pw"}`, "v"+sfx+"@isppr.local"), "")
+	if code != http.StatusOK {
+		t.Fatalf("login: %d", code)
+	}
+	tok := login["token"].(string)
+	code, cli := do(t, e, http.MethodPost, "/api/v1/admin/clients", `{"name":"V"}`, tok)
+	if code != http.StatusCreated {
+		t.Fatalf("client: %d", code)
+	}
+	cliID := cli["id"].(string)
+
+	if code, _ := do(t, e, http.MethodPost,
+		"/api/v1/admin/clients/"+cliID+"/template-masters",
+		`{"name":"bad","html":"<p>x</p>","defaults":{"page":{"size":"ZZZ"}}}`, tok); code != http.StatusBadRequest {
+		t.Fatalf("bad size accepted: %d", code)
+	}
+	if code, _ := do(t, e, http.MethodPost,
+		"/api/v1/admin/clients/"+cliID+"/template-masters",
+		`{"name":"bad2","html":"<p>x</p>","defaults":{"page":{"footer_html":"{{#if}}"}}}`, tok); code != http.StatusBadRequest {
+		t.Fatalf("bad footer accepted: %d", code)
+	}
+	code, m := do(t, e, http.MethodPost,
+		"/api/v1/admin/clients/"+cliID+"/template-masters",
+		`{"name":"good","html":"<p>x</p>","defaults":{"page":{"size":"LETTER"}}}`, tok)
+	if code != http.StatusCreated {
+		t.Fatalf("good master: %d", code)
+	}
+	// Publish a version with an invalid page → 400.
+	if code, _ := do(t, e, http.MethodPost,
+		"/api/v1/admin/clients/"+cliID+"/template-masters/good/versions",
+		`{"html":"<p>v2</p>","defaults":{"page":{"orientation":"upside-down"}}}`, tok); code != http.StatusBadRequest {
+		t.Fatalf("bad publish: %d", code)
+	}
+	_ = m
+}
