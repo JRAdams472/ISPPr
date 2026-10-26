@@ -75,7 +75,7 @@ jobs:
         # Gotenberg + a seeded `go run` api over the postgres/minio already
         # up — real HTTP against the same binaries the unit suite exercised.
         run: |
-          sudo apt-get install -y ghostscript >/dev/null
+          sudo apt-get update -qq && sudo apt-get install -y ghostscript >/dev/null
           docker run -d --name gotenberg -p 3000:3000 gotenberg/gotenberg:8
           for i in $(seq 1 30); do
             curl -sf http://localhost:3000/health && break || sleep 2
@@ -163,7 +163,7 @@ jobs:
           docker logs minio; exit 1
       - name: Start Gotenberg + seeded api
         run: |
-          sudo apt-get install -y ghostscript >/dev/null
+          sudo apt-get update -qq && sudo apt-get install -y ghostscript >/dev/null
           docker run -d --name gotenberg -p 3000:3000 gotenberg/gotenberg:8
           for i in $(seq 1 30); do
             curl -sf http://localhost:3000/health && break || sleep 2
