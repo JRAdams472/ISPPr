@@ -19,9 +19,10 @@ import {
   readPage,
   type PageSetup,
 } from "@/lib/templates/page-setup";
-import { advancedConstructs, exportHTML, prepareForEditor } from "@/lib/templates/serialize";
+import { exportHTML, prepareForEditor, residualAdvanced, togglesFromHtml } from "@/lib/templates/serialize";
 import { editorExtensions } from "./extensions";
 import { FieldPicker } from "./field-picker";
+import { InsertMenu } from "./insert-menu";
 import { PageSetupPanel } from "./page-setup";
 import { EditorToolbar } from "./toolbar";
 
@@ -60,7 +61,7 @@ export function TemplateEditor({
   const editing = master !== null;
 
   const initialAdvanced = useMemo(
-    () => advancedConstructs(master?.html ?? ""),
+    () => residualAdvanced(master?.html ?? ""),
     [master],
   );
   const [mode, setMode] = useState<Mode>(
@@ -77,6 +78,7 @@ export function TemplateEditor({
   const [dataErr, setDataErr] = useState("");
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [pane, setPane] = useState<"preview" | "setup">("preview");
   const [page, setPage] = useState<PageSetup>(() =>
     readPage(master?.defaults),
@@ -108,17 +110,26 @@ export function TemplateEditor({
     });
   }, [editor, paginate, page]);
 
-  const defaultsPayload = useCallback(() => {
+  const currentHtml = () => {
+    if (mode === "source") return sourceHtml;
+    return editor ? exportHTML(editor.getHTML()) : "";
+  };
+
+  const defaultsPayload = () => {
     const p = pagePayload(page);
     const base = { ...(master?.defaults ?? {}) };
     if (Object.keys(p).length) base.page = p;
+    // {{#if blocks.X}} regions flow into defaults.toggles so customer
+    // variants can flip them; existing values are preserved.
+    const tg = togglesFromHtml(currentHtml());
+    if (tg.length) {
+      const existing = (base.toggles ?? {}) as Record<string, boolean>;
+      base.toggles = Object.fromEntries(
+        tg.map((t) => [t, existing[t] ?? true]),
+      );
+    }
     return base;
-  }, [page, master]);
-
-  const currentHtml = useCallback(() => {
-    if (mode === "source") return sourceHtml;
-    return editor ? exportHTML(editor.getHTML()) : "";
-  }, [mode, sourceHtml, editor]);
+  };
 
   const toSource = () => {
     if (editor) setSourceHtml(exportHTML(editor.getHTML()));
@@ -127,7 +138,7 @@ export function TemplateEditor({
   };
 
   const toVisual = () => {
-    const bad = advancedConstructs(sourceHtml);
+    const bad = residualAdvanced(sourceHtml);
     if (bad.length) {
       setPinned(bad);
       return;
@@ -279,7 +290,7 @@ export function TemplateEditor({
               <div className="relative">
                 <EditorToolbar
                   editor={editor}
-                  onInsertField={() => setPickerOpen((o) => !o)}
+                  onInsertField={() => setMenuOpen((o) => !o)}
                 />
                 {pickerOpen ? (
                   <div className="absolute right-2 top-9">
@@ -287,6 +298,24 @@ export function TemplateEditor({
                       editor={editor}
                       sampleJson={sampleJson}
                       onClose={() => setPickerOpen(false)}
+                    />
+                  </div>
+                ) : null}
+                {menuOpen ? (
+                  <div className="absolute right-2 top-9">
+                    <InsertMenu
+                      editor={editor}
+                      brandingKeys={Object.keys(
+                        (master?.defaults?.branding ?? {}) as Record<
+                          string,
+                          string
+                        >,
+                      )}
+                      onPickField={() => {
+                        setMenuOpen(false);
+                        setPickerOpen(true);
+                      }}
+                      onClose={() => setMenuOpen(false)}
                     />
                   </div>
                 ) : null}

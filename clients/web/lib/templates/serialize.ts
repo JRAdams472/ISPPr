@@ -29,7 +29,7 @@ export function advancedConstructs(html: string): string[] {
 
 /** Wraps inline {{expr}} bindings in chip spans the MergeField node parses. */
 export function prepareForEditor(html: string, { wrap = true } = {}): string {
-  const chipped = html.replace(INLINE_RE, (m, expr: string) => {
+  const chipped = liftConstructs(html).replace(INLINE_RE, (m, expr: string) => {
     const e = expr.trim();
     return e ? `<span class="merge-field-chip">{{${e}}}</span>` : m;
   });
@@ -68,9 +68,65 @@ export function exportHTML(html: string): string {
       .replace(/<div[^>]*data-page-body[^>]*>/g, "")
       .replace(/<div[^>]*data-page[^>]*>/g, "");
   }
-  return body
+  return lowerConstructs(body)
     .replace(CHIP_RE, (_m, inner: string) => unescapeEntities(inner))
     .trim();
+}
+
+// ── MPE-53 print constructs ─────────────────────────────────────────
+// Visual representations for the Handlebars constructs the canvas can
+// faithfully round-trip: flat {{#if expr}} regions (any expression) and
+// {{#each path}} bodies inside <tbody>. Everything else ({{else}},
+// nested blocks, partials, triple-stash, each outside tbody) still pins
+// source mode — residualAdvanced() runs after the supported transforms.
+
+const IF_OPEN = /\{\{#if\s+([^{}]+?)\s*\}\}/g;
+const EACH_TBODY =
+  /<tbody>\s*\{\{#each\s+([^{}]+?)\s*\}\}([\s\S]*?)\{\{\/each\}\}\s*<\/tbody>/g;
+
+/**
+ * Rewrites supported Handlebars blocks into the visual node markup the
+ * editor parses (cond-region div, data-each tbody). Runs inside
+ * prepareForEditor before the page wrap.
+ */
+export function liftConstructs(html: string): string {
+  return html
+    .replace(EACH_TBODY, '<tbody data-each="$1">$2</tbody>')
+    .replace(IF_OPEN, '<div class="cond-region" data-expr="$1">')
+    .replace(/\{\{\/if\}\}/g, "</div>");
+}
+
+/**
+ * Reverses liftConstructs on editor HTML — runs inside exportHTML after
+ * the page unwrap, before chip unwrapping.
+ */
+export function lowerConstructs(html: string): string {
+  return html
+    .replace(
+      /<div class="cond-region" data-expr="([^"]*)">([\s\S]*?)<\/div>/g,
+      "{{#if $1}}$2{{/if}}",
+    )
+    .replace(
+      /<tbody data-each="([^"]*)">([\s\S]*?)<\/tbody>/g,
+      '<tbody>{{#each $1}}$2{{/each}}</tbody>',
+    );
+}
+
+/**
+ * Constructs the canvas still cannot represent AFTER the supported
+ * transforms — anything left pins source mode.
+ */
+export function residualAdvanced(html: string): string[] {
+  return advancedConstructs(liftConstructs(html));
+}
+
+/** `{{#if blocks.X}}` toggle names for defaults.toggles. */
+export function togglesFromHtml(html: string): string[] {
+  const names = new Set<string>();
+  for (const m of html.matchAll(/\{\{#if\s+blocks\.(\w+)\s*\}\}/g)) {
+    names.add(m[1]);
+  }
+  return [...names].sort();
 }
 
 /** Sample-data JSON → flattened merge-field paths for the picker. */
